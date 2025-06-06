@@ -1,14 +1,39 @@
+from argparse import ArgumentParser
+
 from data import load_data
-from model import train_model, get_embeddings
-import trimap
+from model import train_model, get_embeddings, LightningModel
+from trimap import trimap
 import jax.random as random
 
+from visualize import plot_embeddings
+
+
+def test_embeddings():
+    model = LightningModel.load_from_checkpoint('best.ckpt').model
+    model.eval()  # important for inference
+    test_dataset = load_data(split='test', batch_size=32)
+    embeddings, predicted, actual = get_embeddings(model, test_dataset)
+    key = random.PRNGKey(42)
+
+    embeddings = trimap.transform(key, embeddings, distance='euclidean')
+    plot_embeddings(embeddings, predicted, actual)
+
+
 if __name__ == "__main__":
-    train_dataset, val_dataset = load_data(batch_size=2)
-    model, state = train_model(train_dataset, val_dataset)
+    args = ArgumentParser()
+    args.add_argument('--test', action='store_true', default=False)
+    args.add_argument('--train', action='store_true', default=False)
 
-    test_dataset = load_data(split='test', batch_size=2)
-    embeddings, predicted, actual = get_embeddings(model, state, test_dataset)
+    args = args.parse_args()
+    if args.train:
+        train_dataset, val_dataset = load_data(batch_size=32)
+        train_model(train_dataset, val_dataset)
 
-    key = random.PRNGKey(0)
-    trimap_embeddings = trimap.transform(key, embeddings, distance='euclidean')
+    if args.test:
+        test_embeddings()
+
+
+
+
+
+

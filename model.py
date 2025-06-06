@@ -1,145 +1,106 @@
-import flaxmodels as fm
-import jax
-import jax.numpy as jnp
-import optax
-from flax.linen import tabulate
-from flax.training import train_state
-from flax import linen as nn
-import orbax.checkpoint as ocp
+import shutil
+from pyexpat import features
 
-import jax.random as random
+from torchvision import datasets, models, transforms
+from torch import nn
+import torch
+from torchmetrics.classification import Accuracy
+from pytorch_lightning import Trainer
+from pytorch_lightning.callbacks import ModelCheckpoint
+import pytorch_lightning as pl
+import numpy as np
 
-class TransferredPretrained(nn.Module):
-    base_model: nn.Module
-    final_activation: str
-    num_classes: int
-
-    @nn.compact
-    def __call__(self, x, train=False, get_embedding=False): # train=False means no dropout
-        x = self.base_model(x, train=train)[self.final_activation]
-        x = jnp.mean(x, axis=(1, 2)) # average pooling
-        if get_embedding:
-            return x
-        x = nn.Dense(self.num_classes, name="classifier")(x)
-        return x
 
 def load_pretrained_backbone(backbone='resnet50'):
     if backbone == 'resnet50':
-        return fm.ResNet50(pretrained='imagenet', output='activations'), 'block4_2'
+        return models.resnet50(pretrained=True)
     elif backbone == 'resnet18':
-        return fm.ResNet18(pretrained='imagenet', output='activations'), 'block4_1'
+        return models.resnet18(pretrained=True)
     else:
         raise ValueError(f'{backbone} is an unknown backbone')
 
-def visualize_model():
-    base_model, final_activation = load_pretrained_backbone('resnet18')
-    model = TransferredPretrained(base_model, final_activation, 7)
+def load_model(num_classes=7, backbone='resnet50'):
+    model = load_pretrained_backbone(backbone)
 
-    dummy_input = jnp.ones((1, 224, 224, 3))
-    print(tabulate(model, random.PRNGKey(0))(dummy_input, train=False))
-    exit(0)
+    for param in model.parameters(): # freeze backbone
+        param.requires_grad = False
 
-def load_model(rng_key, num_classes=7):
-    base_model, final_activation = load_pretrained_backbone('resnet18')
-    model = TransferredPretrained(base_model, final_activation, 7)
+    model.fc = nn.Linear(model.fc.in_features, num_classes)
+    return model
 
-    dummy_input = jnp.ones((1, 224, 224, 3))
-    variables = model.init(rng_key, dummy_input, train=False)
+class LightningModel(pl.LightningModule):
+    def __init__(self, num_classes=7, lr=1e-4, backbone='resnet50'):
+        super().__init__()
+        self.save_hyperparameters()
+        self.model = load_model(num_classes=num_classes, backbone=backbone)
+        self.criterion = nn.CrossEntropyLoss()
+        self.train_acc = Accuracy(task="multiclass", num_classes=num_classes)
+        self.val_acc = Accuracy(task="multiclass", num_classes=num_classes)
 
-    return model, variables['params'], variables['batch_stats']
+    def forward(self, x):
+        return self.model(x)
 
-def compute_loss(logits, labels):
-    one_hot = jax.nn.one_hot(labels, logits.shape[-1])
-    return jnp.mean(optax.softmax_cross_entropy(logits, one_hot))
+    def training_step(self, batch, batch_idx):
+        x, y = batch
+        logits = self.forward(x)
+        loss = self.criterion(logits, y)
+        acc = self.train_acc(logits, y)
+        self.log("train_loss", loss, on_step=False, on_epoch=True)
+        self.log("train_acc", acc, on_step=False, on_epoch=True)
+        return loss
 
-@jax.jit
-def train_step(state, x, y, batch_stats):
-    def loss_fn(params):
-        logits, updates = state.apply_fn(
-            {'params': params, 'batch_stats': batch_stats}, x, train=True, mutable=['batch_stats'])
-        loss = compute_loss(logits, y)
-        return loss, updates
+    def validation_step(self, batch, batch_idx):
+        x, y = batch
+        logits = self.forward(x)
+        loss = self.criterion(logits, y)
+        acc = self.val_acc(logits, y)
+        self.log("val_loss", loss, on_step=False, on_epoch=True)
+        self.log("val_acc", acc, on_step=False, on_epoch=True)
 
-    grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
-    (loss, updates), grads = grad_fn(state.params)
-    state = state.apply_gradients(grads=grads)
-    return state, updates['batch_stats']
+    def configure_optimizers(self):
+        return torch.optim.Adam(self.parameters(), lr=self.hparams.lr)
 
-@jax.jit
-def eval_step(state, x, y, batch_stats):
-    logits = state.apply_fn({'params': state.params, 'batch_stats': batch_stats}, x)
-    loss = compute_loss(logits, y)
-    accuracy = jnp.mean(jnp.argmax(logits, -1) == y)
-    return loss, accuracy
+def train_model(train_dataloader, eval_dataloader, seed=0, max_epochs=2):
+    pl.seed_everything(seed)
 
-def eval(state, dataloader, batch_stats):
-    loss, acc, sum_of_weights = 0, 0, 0
-    batch_size = dataloader.batch_size
-    for x, y in dataloader:
-        weight = x.shape[0] / batch_size
-        batch_loss, batch_acc = eval_step(state, x, y, batch_stats)
-        loss += batch_loss * weight
-        acc += batch_acc * weight
-        sum_of_weights += weight
-    loss /= sum_of_weights
-    acc /= sum_of_weights
-    return loss, acc
+    model = LightningModel(num_classes=7)
 
-def create_train_state(model, params, learning_rate):
-    tx = optax.adam(learning_rate)
-    return train_state.TrainState.create(apply_fn=model.apply, params=params, tx=tx)
-
-def setup_checkpoints():
-    options = ocp.CheckpointManagerOptions(save_interval_steps=1, max_to_keep=3)
-
-    # Specify the directory to save checkpoints
-    checkpoint_dir = "/tmp/my_model_checkpoints"
-
-    # Create the CheckpointManager
-    ckpt_manager = ocp.CheckpointManager(
-        checkpoint_dir,
-        options=options,
+    checkpoint_callback = ModelCheckpoint(
+        monitor="val_acc", mode="max", save_top_k=1, verbose=True
     )
-    return ckpt_manager
 
+    trainer = Trainer(
+        max_epochs=max_epochs,
+        accelerator="auto",  # uses GPU if available
+        callbacks=[checkpoint_callback],
+        log_every_n_steps=10
+    )
+    trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=eval_dataloader)
 
-def train_model(train_dataloader, eval_dataloader, seed=0):
-    rng = random.PRNGKey(0)
-    model, params, batch_stats = load_model(rng, num_classes=7)
-    state = create_train_state(model, params, learning_rate=1e-3)
-    best_val_accuracy = 0
-    ckpt_manager = setup_checkpoints()
-    for epoch in range(10):
-        for x, y in train_dataloader:
-            state, batch_stats = train_step(state, x, y, batch_stats)
+    best_path = checkpoint_callback.best_model_path
+    if best_path:
+        shutil.copy(best_path, "best.ckpt")
+    return model
 
-        train_loss, train_acc = eval(state, train_dataloader, batch_stats)
-        val_loss, val_acc = eval(state, eval_dataloader, batch_stats)
-        print(f"Epoch {epoch}: Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f},"
-              f" Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.2%}")
-        if val_acc > best_val_accuracy:
-            best_val_accuracy = val_acc
-            save_args = ocp.args.Composite(
-                train_state=ocp.args.StandardSave(state),  # Save the TrainState
-                batch_stats=ocp.args.StandardSave(batch_stats)  # Save the batch_stats PyTree
-            )
-            ckpt_manager.save(epoch, args=save_args)
-
-    ckpt_manager.wait_until_finished()
-    ckpt_manager.close()
-    return model, state
-
-def get_embeddings(model, state, dataloader):
-    predictor_head = nn.Dense(model.num_classes)
-    features = []
-    predictions = []
-    actual = []
+def get_embeddings(model, dataloader):
+    features, predictions, actual = None, None, None
+    model.eval()
+    device = next(model.parameters()).device
+    feature_extractor = torch.nn.Sequential(*list(model.children())[:-1])
+    classifier = list(model.children())[-1]
     for x, y in dataloader:
-        batch_features = model.base_model.apply({'params': state.params['base_model'], 'batch_stats': state.batch_stats},
-                                                x, train=False, get_embedding=True)
-        features.append(batch_features)
-        predictions.append(predictor_head.apply({'params': state.params['classifier']}, batch_features))
-        actual.append(y)
+        x = x.to(device)
+        embeddings = feature_extractor(x).squeeze()
+        predicted = classifier(embeddings).argmax(dim=-1)
+
+        if features is None or predictions is None or actual is None:
+            features = embeddings.cpu().detach().numpy()
+            predictions = predicted.cpu().detach().numpy()
+            actual = y.cpu().detach().numpy()
+        else:
+            features = np.concatenate((features, embeddings.cpu().detach().numpy()))
+            predictions = np.concatenate((predictions, predicted.cpu().detach().numpy()))
+            actual = np.concatenate((actual, y.cpu().detach().numpy()))
 
     return features, predictions, actual
 

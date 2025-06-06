@@ -1,48 +1,36 @@
 import os
-import tensorflow as tf
-import tensorflow_datasets as tfds
+from torchvision import transforms as T
+from torch.utils.data import DataLoader
+from torch.utils.data import Subset
+from sklearn.model_selection import train_test_split
+from torchvision import datasets
 
 import kagglehub
 
-
-# def numpy_collate(batch):
-#     return tree_map(np.asarray, default_collate(batch))
-
-def preprocess(image, label):
-    image = tf.cast(image, tf.float32)
-    label = tf.one_hot(label, depth=7)
-    return image, label
-
-def prepare(dataset):
-    dataset.map(preprocess, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-    dataset = tfds.as_numpy(dataset)
-    return dataset
-
+def train_val_dataset(dataset, val_split=0.2):
+    train_idx, val_idx = train_test_split(list(range(len(dataset))), test_size=val_split)
+    return Subset(dataset, train_idx), Subset(dataset, val_idx)
 
 def load_data(domain="art_painting",  split='train', batch_size=32, image_size=224, val_split=0.2, seed=0):
     # Download and locate PACS dataset
     dataset_path = kagglehub.dataset_download("nickfratto/pacs-dataset")
     data_dir = os.path.join(dataset_path, "pacs_data", "pacs_data", domain)
 
-    # Use TensorFlow's image_dataset_from_directory
-    dataloader_args = {
-        'image_size': image_size,
-        'batch_size': batch_size,
-        'label_mode': 'int',
-        'seed': seed,
-        'validation_split': val_split,
-    }
+    # Define transforms
+    transform = T.Compose([
+        T.Resize(image_size),
+        T.ToTensor(),
+        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
+
+    # Load full dataset
+    full_dataset = datasets.ImageFolder(root=data_dir, transform=transform)
 
     if split == 'train':
-        train_dataset = tf.keras.utils.image_dataset_from_directory(data_dir, **dataloader_args,
-                                                                    subset='training', shuffle=True)
-        val_dataset = tf.keras.utils.image_dataset_from_directory(data_dir, **dataloader_args,
-                                                                  subset='validation', shuffle=False)
-
-        val_dataset = prepare(val_dataset)
-        train_dataset = prepare(train_dataset)
-        return train_dataset, val_dataset
+        train_dataset, val_dataset = train_val_dataset(full_dataset)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+        return train_loader, val_loader
     else:
-        dataset = tf.keras.utils.image_dataset_from_directory(data_dir, **dataloader_args, shuffle=False)
-        dataset = prepare(dataset)
-        return dataset
+        test_loader = DataLoader(full_dataset, batch_size=batch_size, shuffle=False)
+        return test_loader
