@@ -434,24 +434,44 @@ def trimap_metrics_haversine_grad(embedding, triplets, weights):
 
   sim_distance, sim_grad = haversine_grad(anc_points, sim_points)
   out_distance, out_grad = haversine_grad(anc_points, out_points)
-  print("sim_grad", sim_grad[0:10])
-  print("out_grad", out_grad[0:10])
 
   # Compute loss
   loss = jnp.mean(weights * 1. / (1. + out_distance / sim_distance))
 
-  # Compute analytic gradient using quotient rule
-  ratio = out_distance / sim_distance
-  denom = (1.0 + ratio) ** 2
-  coeff_out = -weights / (denom * sim_distance)
-  coeff_sim = weights * out_distance / (denom * sim_distance ** 2)
+  # Compute gradient of the loss with respect to the embedding
+  # We'll accumulate gradients for each point in the embedding
+  grad = jnp.zeros_like(embedding)
 
-  grad = jnp.zeros_like(embedding, dtype=jnp.float32)
+  # For each triplet, compute the gradient contribution for anchor, sim, out
+  # The loss is: mean(weights * 1/(1 + out_distance/sim_distance))
+  # Let f = 1/(1 + out_distance/sim_distance)
+  # dL/dsim = weights * df/dsim
+  # dL/dout = weights * df/dout
 
-  # Scatter-add gradients to the appropriate indices
-  grad = grad.at[triplets[:, 0]].add(coeff_out[:, None] * out_grad + coeff_sim[:, None] * sim_grad)
-  grad = grad.at[triplets[:, 1]].add(-coeff_sim[:, None] * sim_grad)
-  grad = grad.at[triplets[:, 2]].add(-coeff_out[:, None] * out_grad)
+  # Compute partial derivatives
+  sim_distance = sim_distance + 1e-8  # avoid division by zero
+  out_distance = out_distance + 1e-8
+
+  f = 1. / (1. + out_distance / sim_distance)
+  df_dsim = weights * (out_distance / (sim_distance ** 2)) / (1. + out_distance / sim_distance) ** 2
+  df_dout = -weights / (sim_distance * (1. + out_distance / sim_distance) ** 2)
+
+  # Each triplet: anchor, sim, out
+  # sim_grad: d(haversine(anchor, sim))/d anchor
+  # out_grad: d(haversine(anchor, out))/d anchor
+
+  # For anchor:
+  grad_anchor = (df_dsim[:, None] * sim_grad) + (df_dout[:, None] * out_grad)
+  # For sim:
+  grad_sim = -df_dsim[:, None] * sim_grad
+  # For out:
+  grad_out = -df_dout[:, None] * out_grad
+
+  # Accumulate gradients for each point
+  grad = grad.at[triplets[:, 0]].add(grad_anchor)
+  grad = grad.at[triplets[:, 1]].add(grad_sim)
+  grad = grad.at[triplets[:, 2]].add(grad_out)
+
 
   return loss, grad
 
@@ -485,7 +505,7 @@ def trimap_loss(embedding, triplets, weights, output_metric='euclidean'):
 def trimap_loss_haversine(embedding, triplets, weights, output_metric='euclidean'):
   """Return trimap loss."""
 
-  loss, _ = trimap_metrics_haversine(embedding, triplets, weights)
+  loss, _ = trimap_metrics_haversine_grad(embedding, triplets, weights)
   return loss
 
 
@@ -592,7 +612,8 @@ def transform(key,
 
 
   if output_metric == 'haversine':
-    trimap_grad = jax.jit(jax.grad(trimap_loss_haversine))
+    trimap_grad = jax.jit(lambda embedding, triplets, weights: trimap_metrics_haversine_grad(embedding, triplets, weights)[1])
+
   else:
     trimap_grad = jax.jit(jax.grad(trimap_loss))
 
