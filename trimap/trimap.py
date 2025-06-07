@@ -30,6 +30,7 @@ import numpy as np
 import pynndescent
 from sklearn.decomposition import PCA
 from sklearn.decomposition import TruncatedSVD
+import umap.distances as umap_distances
 
 _DIM_PCA = 100
 _INIT_SCALE = 0.01
@@ -62,8 +63,17 @@ def get_distance_fn(distance_fn_name):
     return hamming_dist
   elif distance_fn_name == 'chebyshev':
     return chebyshev_dist
+  elif distance_fn_name in umap_distances.named_distances:
+    print(f'Using UMAP distance function: {distance_fn_name}')
+    raise NotImplementedError(
+        f'UMAP distance function {distance_fn_name} is not implemented in TriMap.'
+    )
   else:
     raise ValueError(f'Distance function {distance_fn_name} not supported.')
+
+def get_output_distance_fn(output_metric_name):
+  """Get the output (embedding space) distance function."""
+  return get_distance_fn(output_metric_name)
 
 
 def sliced_distances(
@@ -366,10 +376,95 @@ def update_embedding_dbd(embedding, grad, vel, gain, lr, iter_num):
   embedding += vel
   return embedding, gain, vel
 
+@jax.jit
+def haversine_distance(x, y):
+  """Haversine distance between rows of x and y (both [..., 2])."""
+  # x: (..., 2), y: (..., 2)
+  # x[..., 0] = latitude, x[..., 1] = longitude
+  # expects radians
+  lat1 = x[..., 0]
+  lon1 = x[..., 1]
+  lat2 = y[..., 0]
+  lon2 = y[..., 1]
+  dlat = lat2 - lat1
+  dlon = lon2 - lon1
+  a = jnp.sin(dlat / 2.0) ** 2 + jnp.cos(lat1) * jnp.cos(lat2) * jnp.sin(dlon / 2.0) ** 2
+  c = 2.0 * jnp.arcsin(jnp.minimum(jnp.sqrt(a), 1.0))
+  return c
 
 @jax.jit
-def trimap_metrics(embedding, triplets, weights):
-  """Return trimap loss and number of violated triplets."""
+def haversine_grad(x, y):
+    # x: (N, 2), y: (N, 2)
+    # spectral initialization puts many points near the poles
+    # currently, adding pi/2 to the latitude avoids problems
+    # TODO: reimplement with quaternions to avoid singularity
+
+    def single_grad(xi, yi):
+        sin_lat = jnp.sin(0.5 * (xi[0] - yi[0]))
+        cos_lat = jnp.cos(0.5 * (xi[0] - yi[0]))
+        sin_long = jnp.sin(0.5 * (xi[1] - yi[1]))
+        cos_long = jnp.cos(0.5 * (xi[1] - yi[1]))
+
+        a_0 = jnp.cos(xi[0] + jnp.pi / 2) * jnp.cos(yi[0] + jnp.pi / 2) * sin_long**2
+        a_1 = a_0 + sin_lat**2
+
+        d_i = 2.0 * jnp.arcsin(jnp.sqrt(jnp.clip(jnp.abs(a_1), 0, 1)))
+        denom = jnp.sqrt(jnp.abs(a_1 - 1)) * jnp.sqrt(jnp.abs(a_1))
+        grad_i = jnp.array(
+            [
+                (
+                    sin_lat * cos_lat
+                    - jnp.sin(xi[0] + jnp.pi / 2) * jnp.cos(yi[0] + jnp.pi / 2) * sin_long**2
+                ),
+                (jnp.cos(xi[0] + jnp.pi / 2) * jnp.cos(yi[0] + jnp.pi / 2) * sin_long * cos_long),
+            ]
+        ) / (denom + 1e-6)
+        return d_i, grad_i
+
+    if x.shape[1] != 2:
+        raise ValueError("haversine is only defined for 2 dimensional data")
+    d, grad = jax.vmap(single_grad)(x, y)
+    return d, grad
+
+
+def trimap_metrics_haversine_grad(embedding, triplets, weights):
+  anc_points = embedding[triplets[:, 0]]
+  sim_points = embedding[triplets[:, 1]]
+  out_points = embedding[triplets[:, 2]]
+
+  sim_distance, sim_grad = haversine_grad(anc_points, sim_points)
+  out_distance, out_grad = haversine_grad(anc_points, out_points)
+  print("sim_grad", sim_grad[0:10])
+  print("out_grad", out_grad[0:10])
+
+  # Compute loss
+  loss = jnp.mean(weights * 1. / (1. + out_distance / sim_distance))
+
+  # Compute analytic gradient using quotient rule
+  ratio = out_distance / sim_distance
+  denom = (1.0 + ratio) ** 2
+  coeff_out = -weights / (denom * sim_distance)
+  coeff_sim = weights * out_distance / (denom * sim_distance ** 2)
+
+  grad = jnp.zeros_like(embedding, dtype=jnp.float32)
+
+  # Scatter-add gradients to the appropriate indices
+  grad = grad.at[triplets[:, 0]].add(coeff_out[:, None] * out_grad + coeff_sim[:, None] * sim_grad)
+  grad = grad.at[triplets[:, 1]].add(-coeff_sim[:, None] * sim_grad)
+  grad = grad.at[triplets[:, 2]].add(-coeff_out[:, None] * out_grad)
+
+  return loss, grad
+
+
+def trimap_metrics(embedding, triplets, weights, output_metric='euclidean'):
+  """Return trimap loss and number of violated triplets.
+
+  Args:
+    embedding: The embedding array.
+    triplets: Triplet indices.
+    weights: Triplet weights.
+    output_metric: Distance metric for embedding space (default 'euclidean').
+  """
   anc_points = embedding[triplets[:, 0]]
   sim_points = embedding[triplets[:, 1]]
   out_points = embedding[triplets[:, 2]]
@@ -381,9 +476,16 @@ def trimap_metrics(embedding, triplets, weights):
 
 
 @jax.jit
-def trimap_loss(embedding, triplets, weights):
+def trimap_loss(embedding, triplets, weights, output_metric='euclidean'):
   """Return trimap loss."""
-  loss, _ = trimap_metrics(embedding, triplets, weights)
+  loss, _ = trimap_metrics(embedding, triplets, weights, output_metric=output_metric)
+  return loss
+
+@jax.jit
+def trimap_loss_haversine(embedding, triplets, weights, output_metric='euclidean'):
+  """Return trimap loss."""
+
+  loss, _ = trimap_metrics_haversine(embedding, triplets, weights)
   return loss
 
 
@@ -395,6 +497,7 @@ def transform(key,
               n_random=3,
               weight_temp=0.5,
               distance='euclidean',
+              output_metric='euclidean',
               lr=0.1,
               n_iters=400,
               init_embedding='pca',
@@ -412,7 +515,8 @@ def transform(key,
     n_outliers: Number of outliers.
     n_random: Number of random triplets per point.
     weight_temp: Temperature of the log transformation on the weights.
-    distance: Distance type.
+    distance: Distance type (input space).
+    output_metric: Output metric (embedding space).
     lr: Learning rate.
     n_iters: Number of iterations.
     init_embedding: Initial embedding: pca, random, or pass pre-computed.
@@ -486,7 +590,11 @@ def transform(key,
   vel = jnp.zeros_like(embedding, dtype=jnp.float32)
   gain = jnp.ones_like(embedding, dtype=jnp.float32)
 
-  trimap_grad = jax.jit(jax.grad(trimap_loss))
+
+  if output_metric == 'haversine':
+    trimap_grad = jax.jit(jax.grad(trimap_loss_haversine))
+  else:
+    trimap_grad = jax.jit(jax.grad(trimap_loss))
 
   for itr in range(n_iters):
     gamma = _FINAL_MOMENTUM if itr > _SWITCH_ITER else _INIT_MOMENTUM
@@ -497,7 +605,7 @@ def transform(key,
                                                 itr)
     if verbose:
       if (itr + 1) % _DISPLAY_ITER == 0:
-        loss, n_violated = trimap_metrics(embedding, triplets, weights)
+        loss, n_violated = trimap_metrics(embedding, triplets, weights, output_metric=output_metric)
         logging.info(
             'Iteration: %4d / %4d, Loss: %3.3f, Violated triplets: %0.4f',
             itr + 1, n_iters, loss, n_violated / n_triplets * 100.0)
