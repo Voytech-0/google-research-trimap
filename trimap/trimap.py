@@ -30,7 +30,7 @@ import numpy as np
 import pynndescent
 from sklearn.decomposition import PCA
 from sklearn.decomposition import TruncatedSVD
-import umap.distances as umap_distances
+import distances
 
 _DIM_PCA = 100
 _INIT_SCALE = 0.01
@@ -376,64 +376,25 @@ def update_embedding_dbd(embedding, grad, vel, gain, lr, iter_num):
   embedding += vel
   return embedding, gain, vel
 
-@jax.jit
-def haversine_distance(x, y):
-  """Haversine distance between rows of x and y (both [..., 2])."""
-  # x: (..., 2), y: (..., 2)
-  # x[..., 0] = latitude, x[..., 1] = longitude
-  # expects radians
-  lat1 = x[..., 0]
-  lon1 = x[..., 1]
-  lat2 = y[..., 0]
-  lon2 = y[..., 1]
-  dlat = lat2 - lat1
-  dlon = lon2 - lon1
-  a = jnp.sin(dlat / 2.0) ** 2 + jnp.cos(lat1) * jnp.cos(lat2) * jnp.sin(dlon / 2.0) ** 2
-  c = 2.0 * jnp.arcsin(jnp.minimum(jnp.sqrt(a), 1.0))
-  return c
 
-@jax.jit
-def haversine_grad(x, y):
-    # x: (N, 2), y: (N, 2)
-    # spectral initialization puts many points near the poles
-    # currently, adding pi/2 to the latitude avoids problems
-    # TODO: reimplement with quaternions to avoid singularity
+def metric_grad(x, y, metric):
 
-    def single_grad(xi, yi):
-        sin_lat = jnp.sin(0.5 * (xi[0] - yi[0]))
-        cos_lat = jnp.cos(0.5 * (xi[0] - yi[0]))
-        sin_long = jnp.sin(0.5 * (xi[1] - yi[1]))
-        cos_long = jnp.cos(0.5 * (xi[1] - yi[1]))
+  if metric not in distances.named_distances_with_gradients:
+    raise ValueError("Not gradient method for", metric)
 
-        a_0 = jnp.cos(xi[0] + jnp.pi / 2) * jnp.cos(yi[0] + jnp.pi / 2) * sin_long**2
-        a_1 = a_0 + sin_lat**2
+  single_grad = distances.named_distances_with_gradients[metric]
 
-        d_i = 2.0 * jnp.arcsin(jnp.sqrt(jnp.clip(jnp.abs(a_1), 0, 1)))
-        denom = jnp.sqrt(jnp.abs(a_1 - 1)) * jnp.sqrt(jnp.abs(a_1))
-        grad_i = jnp.array(
-            [
-                (
-                    sin_lat * cos_lat
-                    - jnp.sin(xi[0] + jnp.pi / 2) * jnp.cos(yi[0] + jnp.pi / 2) * sin_long**2
-                ),
-                (jnp.cos(xi[0] + jnp.pi / 2) * jnp.cos(yi[0] + jnp.pi / 2) * sin_long * cos_long),
-            ]
-        ) / (denom + 1e-6)
-        return d_i, grad_i
-
-    if x.shape[1] != 2:
-        raise ValueError("haversine is only defined for 2 dimensional data")
-    d, grad = jax.vmap(single_grad)(x, y)
-    return d, grad
+  d, grad = jax.vmap(single_grad)(x, y)
+  return d, grad
 
 
-def trimap_metrics_haversine_grad(embedding, triplets, weights):
+def trimap_metrics_grad(embedding, triplets, weights, metric):
   anc_points = embedding[triplets[:, 0]]
   sim_points = embedding[triplets[:, 1]]
   out_points = embedding[triplets[:, 2]]
 
-  sim_distance, sim_grad = haversine_grad(anc_points, sim_points)
-  out_distance, out_grad = haversine_grad(anc_points, out_points)
+  sim_distance, sim_grad = metric_grad(anc_points, sim_points, metric)
+  out_distance, out_grad = metric_grad(anc_points, out_points, metric)
 
   # Compute loss
   loss = jnp.mean(weights * 1. / (1. + out_distance / sim_distance))
@@ -499,13 +460,6 @@ def trimap_metrics(embedding, triplets, weights, output_metric='euclidean'):
 def trimap_loss(embedding, triplets, weights, output_metric='euclidean'):
   """Return trimap loss."""
   loss, _ = trimap_metrics(embedding, triplets, weights, output_metric=output_metric)
-  return loss
-
-@jax.jit
-def trimap_loss_haversine(embedding, triplets, weights, output_metric='euclidean'):
-  """Return trimap loss."""
-
-  loss, _ = trimap_metrics_haversine_grad(embedding, triplets, weights)
   return loss
 
 
@@ -611,8 +565,8 @@ def transform(key,
   gain = jnp.ones_like(embedding, dtype=jnp.float32)
 
 
-  if output_metric == 'haversine':
-    trimap_grad = jax.jit(lambda embedding, triplets, weights: trimap_metrics_haversine_grad(embedding, triplets, weights)[1])
+  if output_metric != 'euclidean':
+    trimap_grad = (lambda embedding, triplets, weights: trimap_metrics_grad(embedding, triplets, weights, output_metric)[1])
 
   else:
     trimap_grad = jax.jit(jax.grad(trimap_loss))
