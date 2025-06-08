@@ -175,8 +175,8 @@ def poincare(u, v):
 
 @jax.jit
 def hyperboloid_grad(x, y):
-    s = jnp.sqrt(1 + jnp.sum(x**2))
-    t = jnp.sqrt(1 + jnp.sum(y**2))
+    s = jnp.sqrt(1 + jnp.sum(x ** 2))
+    t = jnp.sqrt(1 + jnp.sum(y ** 2))
 
     B = s * t
     for i in range(x.shape[0]):
@@ -309,9 +309,9 @@ def canberra_grad(x, y):
             result += jnp.abs(x[i] - y[i]) / denominator
             grad = grad.at[i].set(
                 jnp.sign(x[i] - y[i]) / denominator
-                - jnp.abs(x[i] - y[i]) * jnp.sign(x[i]) / denominator**2
+                - jnp.abs(x[i] - y[i]) * jnp.sign(x[i]) / denominator ** 2
                 + jnp.sign(x[i] - y[i]) / denominator
-                - jnp.abs(x[i] - y[i]) * jnp.sign(y[i]) / denominator**2
+                - jnp.abs(x[i] - y[i]) * jnp.sign(y[i]) / denominator ** 2
             )
     return result, grad
 
@@ -409,7 +409,7 @@ def kulsinski(x, y):
         return 0.0
     else:
         return (num_not_equal - num_true_true + x.shape[0]) / (
-            num_not_equal + x.shape[0]
+                num_not_equal + x.shape[0]
         )
 
 
@@ -473,8 +473,9 @@ def haversine(x, y):
         raise ValueError("haversine is only defined for 2 dimensional data")
     sin_lat = jnp.sin(0.5 * (x[0] - y[0]))
     sin_long = jnp.sin(0.5 * (x[1] - y[1]))
-    result = jnp.sqrt(sin_lat**2 + jnp.cos(x[0]) * jnp.cos(y[0]) * sin_long**2)
+    result = jnp.sqrt(sin_lat ** 2 + jnp.cos(x[0]) * jnp.cos(y[0]) * sin_long ** 2)
     return 2.0 * jnp.arcsin(result)
+
 
 @jax.jit
 def haversine_grad(x, y):
@@ -489,8 +490,8 @@ def haversine_grad(x, y):
     sin_long = jnp.sin(0.5 * (x[1] - y[1]))
     cos_long = jnp.cos(0.5 * (x[1] - y[1]))
 
-    a_0 = jnp.cos(x[0] + jnp.pi / 2) * jnp.cos(y[0] + jnp.pi / 2) * sin_long**2
-    a_1 = a_0 + sin_lat**2
+    a_0 = jnp.cos(x[0] + jnp.pi / 2) * jnp.cos(y[0] + jnp.pi / 2) * sin_long ** 2
+    a_1 = a_0 + sin_lat ** 2
 
     # Clamp a_1 to [0, 1] for numerical stability
     a_1_clamped = jnp.clip(jnp.abs(a_1), 0.0, 1.0)
@@ -499,8 +500,8 @@ def haversine_grad(x, y):
     grad = jnp.array(
         [
             (
-                sin_lat * cos_lat
-                - jnp.sin(x[0] + jnp.pi / 2) * jnp.cos(y[0] + jnp.pi / 2) * sin_long**2
+                    sin_lat * cos_lat
+                    - jnp.sin(x[0] + jnp.pi / 2) * jnp.cos(y[0] + jnp.pi / 2) * sin_long ** 2
             ),
             (jnp.cos(x[0] + jnp.pi / 2) * jnp.cos(y[0] + jnp.pi / 2) * sin_long * cos_long),
         ]
@@ -526,7 +527,7 @@ def yule(x, y):
         return 0.0
     else:
         return (2.0 * num_true_false * num_false_true) / (
-            num_true_true * num_false_false + num_true_false * num_false_true
+                num_true_true * num_false_false + num_true_false * num_false_true
         )
 
 
@@ -565,7 +566,7 @@ def cosine_grad(x, y):
         dist = 1.0
         grad = jnp.zeros(x.shape)
     else:
-        grad = -(x * result - y * norm_x) / jnp.sqrt(norm_x**3 * norm_y)
+        grad = -(x * result - y * norm_x) / jnp.sqrt(norm_x ** 3 * norm_y)
         dist = 1.0 - (result / jnp.sqrt(norm_x * norm_y))
 
     return dist, grad
@@ -589,8 +590,8 @@ def correlation(x, y):
     for i in range(x.shape[0]):
         shifted_x = x[i] - mu_x
         shifted_y = y[i] - mu_y
-        norm_x += shifted_x**2
-        norm_y += shifted_y**2
+        norm_x += shifted_x ** 2
+        norm_y += shifted_y ** 2
         dot_product += shifted_x * shifted_y
 
     if norm_x == 0.0 and norm_y == 0.0:
@@ -644,7 +645,7 @@ def hellinger_grad(x, y):
         dist_denom = jnp.sqrt(l1_norm_x * l1_norm_y)
         dist = jnp.sqrt(1 - result / dist_denom)
         grad_denom = 2 * dist
-        grad_numer_const = (l1_norm_y * result) / (2 * dist_denom**3)
+        grad_numer_const = (l1_norm_y * result) / (2 * dist_denom ** 3)
 
         grad = (grad_numer_const - (y / grad_term * dist_denom)) / grad_denom
 
@@ -804,8 +805,8 @@ def correlation_grad(x, y):
     for i in range(x.shape[0]):
         shifted_x = x[i] - mu_x
         shifted_y = y[i] - mu_y
-        norm_x += shifted_x**2
-        norm_y += shifted_y**2
+        norm_x += shifted_x ** 2
+        norm_y += shifted_y ** 2
         dot_product += shifted_x * shifted_y
 
     if norm_x == 0.0 and norm_y == 0.0:
@@ -823,7 +824,7 @@ def correlation_grad(x, y):
 
 @jax.jit
 def sinkhorn_distance(
-    x, y, M=_mock_identity, cost=_mock_cost, maxiter=64
+        x, y, M=_mock_identity, cost=_mock_cost, maxiter=64
 ):  # pragma: no cover
     p = (x / x.sum()).astype(jnp.float32)
     q = (y / y.sum()).astype(jnp.float32)
@@ -854,12 +855,12 @@ def spherical_gaussian_energy_grad(x, y):  # pragma: no cover
     sigma = jnp.abs(x[2]) + jnp.abs(y[2])
     sign_sigma = jnp.sign(x[2])
 
-    dist = (mu_1**2 + mu_2**2) / (2 * sigma) + jnp.log(sigma) + jnp.log(2 * jnp.pi)
+    dist = (mu_1 ** 2 + mu_2 ** 2) / (2 * sigma) + jnp.log(sigma) + jnp.log(2 * jnp.pi)
     grad = jnp.empty(3, jnp.float32)
 
     grad = grad.at[0].set(mu_1 / sigma)
     grad = grad.at[1].set(mu_2 / sigma)
-    grad = grad.at[2].set(sign_sigma * (1.0 / sigma - (mu_1**2 + mu_2**2) / (2 * sigma**2)))
+    grad = grad.at[2].set(sign_sigma * (1.0 / sigma - (mu_1 ** 2 + mu_2 ** 2) / (2 * sigma ** 2)))
 
     return dist, grad
 
@@ -878,21 +879,21 @@ def diagonal_gaussian_energy_grad(x, y):  # pragma: no cover
     sign_s2 = jnp.sign(x[3])
 
     def grad_fallback():
-        return mu_1**2 + mu_2**2, jnp.array([0.0, 0.0, 1.0, 1.0], dtype=jnp.float32)
+        return mu_1 ** 2 + mu_2 ** 2, jnp.array([0.0, 0.0, 1.0, 1.0], dtype=jnp.float32)
 
     def grad_main():
         cross_term = 2 * sigma_12
         m_dist = (
-            jnp.abs(sigma_22) * (mu_1**2)
-            - cross_term * mu_1 * mu_2
-            + jnp.abs(sigma_11) * (mu_2**2)
+                jnp.abs(sigma_22) * (mu_1 ** 2)
+                - cross_term * mu_1 * mu_2
+                + jnp.abs(sigma_11) * (mu_2 ** 2)
         )
         dist = (m_dist / det + jnp.log(jnp.abs(det))) / 2.0 + jnp.log(2 * jnp.pi)
         grad = jnp.empty(6, dtype=jnp.float32)
         grad = grad.at[0].set((2 * sigma_22 * mu_1 - cross_term * mu_2) / (2 * det))
         grad = grad.at[1].set((2 * sigma_11 * mu_2 - cross_term * mu_1) / (2 * det))
-        grad = grad.at[2].set(sign_s1 * (sigma_22 * (det - m_dist) + det * mu_2**2) / (2 * det**2))
-        grad = grad.at[3].set(sign_s2 * (sigma_11 * (det - m_dist) + det * mu_1**2) / (2 * det**2))
+        grad = grad.at[2].set(sign_s1 * (sigma_22 * (det - m_dist) + det * mu_2 ** 2) / (2 * det ** 2))
+        grad = grad.at[3].set(sign_s2 * (sigma_11 * (det - m_dist) + det * mu_1 ** 2) / (2 * det ** 2))
         return dist, grad
 
     return jax.lax.cond(det == 0.0, grad_fallback, grad_main)
@@ -926,14 +927,14 @@ def gaussian_energy_grad(x, y):  # pragma: no cover
     sigma_22 = x2 * jnp.sin(x4) ** 2 + x3 * jnp.cos(x4) ** 2 + c
 
     # Determinant of the sum of covariances
-    det_sigma = jnp.abs(sigma_11 * sigma_22 - sigma_12**2)
+    det_sigma = jnp.abs(sigma_11 * sigma_22 - sigma_12 ** 2)
     x_inv_sigma_y_numerator = (
-        sigma_22 * mu_1**2 - 2 * sigma_12 * mu_1 * mu_2 + sigma_11 * mu_2**2
+            sigma_22 * mu_1 ** 2 - 2 * sigma_12 * mu_1 * mu_2 + sigma_11 * mu_2 ** 2
     )
 
     def grad_fallback():
         return (
-            mu_1**2 + mu_2**2,
+            mu_1 ** 2 + mu_2 ** 2,
             jnp.array([0.0, 0.0, 1.0, 1.0, 0.0], dtype=jnp.float32),
         )
 
@@ -944,35 +945,35 @@ def gaussian_energy_grad(x, y):  # pragma: no cover
         grad = grad.at[1].set((2 * sigma_11 * mu_2 - 2 * sigma_12 * mu_1) / det_sigma)
 
         grad2 = (
-            mu_2 * (mu_2 * jnp.cos(x4) ** 2 - mu_1 * jnp.cos(x4) * jnp.sin(x4))
-            + mu_1 * (mu_1 * jnp.sin(x4) ** 2 - mu_2 * jnp.cos(x4) * jnp.sin(x4))
+                mu_2 * (mu_2 * jnp.cos(x4) ** 2 - mu_1 * jnp.cos(x4) * jnp.sin(x4))
+                + mu_1 * (mu_1 * jnp.sin(x4) ** 2 - mu_2 * jnp.cos(x4) * jnp.sin(x4))
         )
         grad2 *= det_sigma
         grad2 -= x_inv_sigma_y_numerator * jnp.cos(x4) ** 2 * sigma_22
         grad2 -= x_inv_sigma_y_numerator * jnp.sin(x4) ** 2 * sigma_11
         grad2 += x_inv_sigma_y_numerator * 2 * sigma_12 * jnp.sin(x4) * jnp.cos(x4)
-        grad2 /= det_sigma**2 + 1e-8
+        grad2 /= det_sigma ** 2 + 1e-8
         grad = grad.at[2].set(grad2)
 
         grad3 = (
-            mu_1 * (mu_1 * jnp.cos(x4) ** 2 - mu_2 * jnp.cos(x4) * jnp.sin(x4))
-            + mu_2 * (mu_2 * jnp.sin(x4) ** 2 - mu_1 * jnp.cos(x4) * jnp.sin(x4))
+                mu_1 * (mu_1 * jnp.cos(x4) ** 2 - mu_2 * jnp.cos(x4) * jnp.sin(x4))
+                + mu_2 * (mu_2 * jnp.sin(x4) ** 2 - mu_1 * jnp.cos(x4) * jnp.sin(x4))
         )
         grad3 *= det_sigma
         grad3 -= x_inv_sigma_y_numerator * jnp.sin(x4) ** 2 * sigma_22
         grad3 -= x_inv_sigma_y_numerator * jnp.cos(x4) ** 2 * sigma_11
         grad3 -= x_inv_sigma_y_numerator * 2 * sigma_12 * jnp.sin(x4) * jnp.cos(x4)
-        grad3 /= det_sigma**2 + 1e-8
+        grad3 /= det_sigma ** 2 + 1e-8
         grad = grad.at[3].set(grad3)
 
         grad4 = (x3 - x2) * (
-            2 * mu_1 * mu_2 * jnp.cos(2 * x4) - (mu_1**2 - mu_2**2) * jnp.sin(2 * x4)
+                2 * mu_1 * mu_2 * jnp.cos(2 * x4) - (mu_1 ** 2 - mu_2 ** 2) * jnp.sin(2 * x4)
         )
         grad4 *= det_sigma
         grad4 -= x_inv_sigma_y_numerator * (x3 - x2) * jnp.sin(2 * x4) * sigma_22
         grad4 -= x_inv_sigma_y_numerator * (x2 - x3) * jnp.sin(2 * x4) * sigma_11
         grad4 -= x_inv_sigma_y_numerator * 2 * sigma_12 * (x2 - x3) * jnp.cos(2 * x4)
-        grad4 /= det_sigma**2 + 1e-8
+        grad4 /= det_sigma ** 2 + 1e-8
         grad = grad.at[4].set(grad4)
 
         return dist, grad
@@ -993,14 +994,14 @@ def spherical_gaussian_grad(x, y):  # pragma: no cover
 
     def grad_main():
         dist = (
-            (mu_1**2 + mu_2**2) / jnp.abs(sigma)
-            + 2 * jnp.log(jnp.abs(sigma))
-            + jnp.log(2 * jnp.pi)
+                (mu_1 ** 2 + mu_2 ** 2) / jnp.abs(sigma)
+                + 2 * jnp.log(jnp.abs(sigma))
+                + jnp.log(2 * jnp.pi)
         )
         grad = jnp.empty(3, dtype=jnp.float32)
         grad = grad.at[0].set((2 * mu_1) / jnp.abs(sigma))
         grad = grad.at[1].set((2 * mu_2) / jnp.abs(sigma))
-        grad = grad.at[2].set(sigma_sign * (-(mu_1**2 + mu_2**2) / (sigma**2) + (2 / jnp.abs(sigma))))
+        grad = grad.at[2].set(sigma_sign * (-(mu_1 ** 2 + mu_2 ** 2) / (sigma ** 2) + (2 / jnp.abs(sigma))))
         return dist, grad
 
     return jax.lax.cond(sigma == 0, grad_fallback, grad_main)
@@ -1062,6 +1063,7 @@ def count_distance(x, y, poisson_lambda=1.0, normalisation=1.0):
     def log_k_factorial_fn(lo):
         def body_fun(k, val):
             return val + jnp.log(k)
+
         return jax.lax.fori_loop(2, lo, body_fun, 0.0)
 
     log_k_factorial = jax.lax.cond(
@@ -1096,12 +1098,14 @@ def levenshtein(x, y, normalisation=1.0, max_distance=20):
     def outer_body(i, vals):
         v0, v1 = vals
         v1 = v1.at[i].set(i + 1)
+
         def inner_body(j, v1_):
             deletion_cost = v0[j + 1] + 1
             insertion_cost = v1_[j] + 1
             substitution_cost = jnp.where(x[i] == y[j], 0, 1)
             v1_ = v1_.at[j + 1].set(jnp.minimum(jnp.minimum(deletion_cost, insertion_cost), substitution_cost))
             return v1_
+
         v1 = jax.lax.fori_loop(0, y_len, inner_body, v1)
         v0 = v1
         return v0, v1
@@ -1260,7 +1264,7 @@ def chunked_parallel_special_metric(X, Y=None, metric=hellinger, chunk_size=16):
 
 
 def pairwise_special_metric(
-    X, Y=None, metric="hellinger", kwds=None, ensure_all_finite=True
+        X, Y=None, metric="hellinger", kwds=None, ensure_all_finite=True
 ):
     if callable(metric):
         if kwds is not None:
