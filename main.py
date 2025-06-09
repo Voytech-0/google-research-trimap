@@ -1,6 +1,6 @@
 from data import load_data
 from model import train_model, get_embeddings
-import trimap
+import trimap.trimap as trimap
 import jax.random as random
 
 if __name__ == "__main__":
@@ -11,4 +11,4 @@ if __name__ == "__main__":
     embeddings, predicted, actual = get_embeddings(model, state, test_dataset)
 
     key = random.PRNGKey(0)
-    trimap_embeddings = trimap.transform(key, embeddings, distance='euclidean')
+    trimap_embeddings = trimap.transform(key, embeddings, verbose=True, distance='euclidean')
