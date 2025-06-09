@@ -1,12 +1,10 @@
 from functools import partial
-from typing import Callable
 
 import jax
 import jax.numpy as jnp
 import optax
 from flax import linen as nn
 from flax.training import train_state
-from flax import struct
 from trimap.trimap import generate_triplets, trimap_loss
 
 from absl import logging
@@ -17,10 +15,13 @@ class ParametricTriMap(nn.Module):
     hidden_dims: int = 100
     hidden_layers: int = 3
     activation_fn: callable = nn.relu
+    kernel_init: callable = nn.initializers.kaiming_normal()
+    bias_init: callable = nn.initializers.zeros
 
     def setup(self):
-        self.encoder = Encoder(self.latent_dims, self.hidden_dims, self.hidden_layers, self.activation_fn)
-        self.decoder = Decoder(self.input_dims, self.hidden_dims, self.hidden_layers, self.activation_fn)
+        forwarded_params = (self.hidden_dims, self.hidden_layers, self.activation_fn, self.kernel_init, self.bias_init)
+        self.encoder = Encoder(self.latent_dims, *forwarded_params)
+        self.decoder = Decoder(self.input_dims, *forwarded_params)
 
     def encode(self, x):
         return self.encoder(x)
@@ -39,12 +40,15 @@ class Encoder(nn.Module):
     hidden_dims: int
     hidden_layers: int
     activation_fn: callable
+    kernel_init: callable
+    bias_init: callable
 
     @nn.compact
     def __call__(self, x):
         for _ in range(self.hidden_layers):
+            x = nn.Dense(self.hidden_dims, kernel_init=self.kernel_init, bias_init=self.bias_init)(x)
             x = self.activation_fn(nn.Dense(self.hidden_dims)(x))
-        latent = nn.Dense(self.latent_dims)(x)
+        latent = nn.Dense(self.latent_dims, kernel_init=self.kernel_init, bias_init=self.bias_init)(x)
         return latent
 
 class Decoder(nn.Module):
@@ -52,12 +56,15 @@ class Decoder(nn.Module):
     hidden_dims: int
     hidden_layers: int
     activation_fn: callable
+    kernel_init: callable
+    bias_init: callable
 
     @nn.compact
     def __call__(self, x):
         for _ in range(self.hidden_layers):
-            x = self.activation_fn(nn.Dense(self.hidden_dims)(x))
-        output = nn.Dense(self.out_dims)(x)
+            x = nn.Dense(self.hidden_dims, kernel_init=self.kernel_init, bias_init=self.bias_init)(x)
+            x = self.activation_fn(x)
+        output = nn.Dense(self.out_dims, kernel_init=self.kernel_init, bias_init=self.bias_init)(x)
         return output
 
 def initialize_model(input_dims, n_dims, rng_key, lr=1e-4):
