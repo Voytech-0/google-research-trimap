@@ -134,11 +134,11 @@ def fit_transform(inputs, n_dims, rng_key,
                   distance='euclidean',
                   verbose=False):
     model, params = fit(inputs, n_dims, rng_key, lr, n_inliers, n_outliers, n_random,
-                        batch_size=batch_size, n_epochs=n_epochs,
+                        batch_size=batch_size, n_epochs=n_epochs, reconstruction_loss_weight=reconstruction_loss_weight,
                         weight_temp=weight_temp, distance=distance, verbose=verbose)
 
     embedding = transform(inputs, model, params)
     return embedding, model, params
 
 def inverse_transform(embedding, model, params):
-    return model.apply({'params': params['decoder']}, embedding, method=ParametricTriMap.decode)
+    return model.apply({'params': params}, embedding, method=ParametricTriMap.decode)
