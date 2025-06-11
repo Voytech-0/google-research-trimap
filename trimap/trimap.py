@@ -406,8 +406,15 @@ def trimap_metrics_grad(embedding, triplets, weights, metric):
     sim_distance, sim_grad = metric_grad(anc_points, sim_points, metric)  # grad wrt anchor
     out_distance, out_grad = metric_grad(anc_points, out_points, metric)  # grad wrt anchor
 
-    sim_distance += 1.0
-    out_distance += 1.0
+    sim_distance += 1e-8
+    out_distance += 1e-8
+
+    # print how many out_distance ate smaller than sim_distance
+    # if jnp.any(out_distance < sim_distance):
+    #     logging.warning('Some out distances are smaller than sim distances.')
+    #     n_wrong = jnp.sum(out_distance < sim_distance)
+    #     n_total = triplets.shape[0]
+    #     logging.warning('There are %d out of %d triplets with out_distance < sim_distance', n_wrong, n_total)
 
     ratio = out_distance / sim_distance
     loss_term = weights / (1.0 + ratio)
@@ -425,6 +432,11 @@ def trimap_metrics_grad(embedding, triplets, weights, metric):
     dL_dsim = dL_dsim[:, None]
     dL_dout = dL_dout[:, None]
 
+    # do not consider points where out_distance < sim_distance
+    # mask = (out_distance >= sim_distance).reshape(-1, 1)
+    # dL_dsim = jnp.where(mask, dL_dsim, 0.0)
+    # dL_dout = jnp.where(mask, dL_dout, 0.0)
+
     # Gradient of loss w.r.t. anchor, sim, out
     grad_anc = dL_dsim * sim_grad + dL_dout * out_grad
     grad_sim = -dL_dsim * sim_grad  # sim is "negative side" of the distance
@@ -438,23 +450,20 @@ def trimap_metrics_grad(embedding, triplets, weights, metric):
     return loss, grad
 
 
-
-
-
-def trimap_metrics(embedding, triplets, weights, output_metric='euclidean'):
+def trimap_metrics(embedding, triplets, weights, metric='euclidean'):
     """Return trimap loss and number of violated triplets.
 
     Args:
       embedding: The embedding array.
       triplets: Triplet indices.
       weights: Triplet weights.
-      output_metric: Distance metric for embedding space (default 'euclidean').
     """
     anc_points = embedding[triplets[:, 0]]
     sim_points = embedding[triplets[:, 1]]
     out_points = embedding[triplets[:, 2]]
-    sim_distance = 1. + squared_euclidean_dist(anc_points, sim_points)
-    out_distance = 1. + squared_euclidean_dist(anc_points, out_points)
+    fn = get_output_distance_fn(metric)
+    sim_distance = 1. + jax.vmap(fn)(anc_points, sim_points)
+    out_distance = 1. + jax.vmap(fn)(anc_points, out_points)
     num_violated = jnp.sum(sim_distance > out_distance)
     loss = jnp.mean(weights * 1. / (1. + out_distance / sim_distance))
     return loss, num_violated
@@ -573,11 +582,15 @@ def transform(key,
         embedings_series = np.zeros(shape, dtype=np.float32)
 
     # if callable(output_metric) or output_metric != 'euclidean':
-    trimap_grad = (
-        lambda embedding, triplets, weights: trimap_metrics_grad(embedding, triplets, weights, output_metric)[1])
+    # trimap_grad = (
+    #     lambda embedding, triplets, weights: trimap_metrics_grad(embedding, triplets, weights, output_metric)[1])
 
+    def differentiable_loss(embedding, triplets, weights):
+        """Wrapper for the loss function to make it differentiable."""
+        loss, _ = trimap_metrics(embedding, triplets, weights, metric=output_metric)
+        return loss
     # else:
-    #     trimap_grad = jax.jit(jax.grad(trimap_loss))
+    trimap_grad = jax.jit(jax.grad(differentiable_loss))
 
     for itr in range(n_iters):
         gamma = _FINAL_MOMENTUM if itr > _SWITCH_ITER else _INIT_MOMENTUM

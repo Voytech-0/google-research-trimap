@@ -145,18 +145,14 @@ def minkowski_grad(x, y, p=2):
     for p=infinity it is Chebyshev distance. In general it is better
     to use the more specialised functions for those distances.
     """
-    result = 0.0
-    for i in range(x.shape[0]):
-        result += jnp.abs(x[i] - y[i]) ** p
-    grad = jnp.zeros
-    for i in range(x.shape[0]):
-        grad = grad.at[i].set(
-            p
-            * jnp.sign(x[i] - y[i])
-            * jnp.abs(x[i] - y[i]) ** (p - 1)
-            / (result ** (1.0 - 1.0 / p) + 1e-8)
-        )
-    return result ** (1.0 / p), grad
+    # Compute Minkowski distance
+    diff = jnp.abs(x - y)
+    result = jnp.sum(diff ** p)
+    # Compute gradient
+    # grad[i] = (|x[i] - y[i]|**(p-1)) * sign(x[i] - y[i]) * result**(1/(p-1))
+    # Note: result**(1/(p-1)) is only valid for p != 1
+    grad = (diff ** (p - 1.0)) * jnp.sign(x - y) * (result ** (1.0 / (p - 1.0)))
+    return result ** (1.0 / p), grad.astype(jnp.float32)
 
 
 @jax.jit
@@ -227,13 +223,13 @@ def weighted_minkowski_grad(x, y, w=_mock_ones, p=2):
     for i in range(x.shape[0]):
         result += w[i] * (jnp.abs(x[i] - y[i])) ** p
 
-    grad = jnp.zeros(x.shape[0])
+    grad = jnp.zeros(x.shape[0], dtype=jnp.float32)
     for i in range(x.shape[0]):
         grad = grad.at[i].set(
             w[i]
-            * jnp.abs(x[i] - y[i]) ** (p - 1.0)
+            * jnp.pow(jnp.abs(x[i] - y[i]), (p - 1.0))
             * jnp.sign(x[i] - y[i])
-            * (result ** (1.0 / (p - 1)))
+            * jnp.pow(result, (1.0 / (p - 1)))
         )
     return result ** (1.0 / p), grad
 
@@ -895,6 +891,9 @@ def diagonal_gaussian_energy_grad(x, y):  # pragma: no cover
 
     return jax.lax.cond(det == 0.0, grad_fallback, grad_main)
 
+@jax.jit
+def gaussian_energy(x, y):
+    return gaussian_energy_grad(x, y)[0]
 
 @jax.jit
 def gaussian_energy_grad(x, y):  # pragma: no cover
@@ -1161,6 +1160,7 @@ named_distances = {
     "hierarchical_categorical": hierarchical_categorical_distance,
     "count": count_distance,
     "string": levenshtein,
+    "gaussian_energy": gaussian_energy,
 }
 
 named_distances_with_gradients = {
