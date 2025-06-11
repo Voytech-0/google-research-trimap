@@ -6,6 +6,7 @@ import optax
 from flax import linen as nn
 from flax.training import train_state
 from trimap.trimap import generate_triplets, trimap_loss
+import jax.random as random
 
 from absl import logging
 
@@ -94,7 +95,7 @@ def train_step(state, embedding, triplets, weights, alpha):
     return state, loss, aux
 
 
-def fit(inputs, n_dims, rng_key,
+def fit(rng_key, inputs, n_dims,
                   lr=1e-4,
                   n_inliers=10,
                   n_outliers=5,
@@ -105,9 +106,10 @@ def fit(inputs, n_dims, rng_key,
                   weight_temp=0.5,
                   distance='euclidean',
                   verbose=False):
-    model, state = initialize_model(inputs.shape[1], n_dims, rng_key, lr)
+    model_init_key, triplet_key = random.split(rng_key)
+    model, state = initialize_model(inputs.shape[1], n_dims, model_init_key, lr)
     triplets, weights = generate_triplets(
-        rng_key,
+        triplet_key,
         inputs,
         n_inliers,
         n_outliers,
@@ -129,7 +131,7 @@ def fit(inputs, n_dims, rng_key,
 def transform(inputs, model, params):
     return model.apply({'params': params}, inputs, method=ParametricTriMap.encode)
 
-def fit_transform(inputs, n_dims, rng_key,
+def fit_transform(rng_key, inputs, n_dims,
                   lr=1e-4,
                   n_inliers=10,
                   n_outliers=5,
@@ -140,7 +142,7 @@ def fit_transform(inputs, n_dims, rng_key,
                   weight_temp=0.5,
                   distance='euclidean',
                   verbose=False):
-    model, params = fit(inputs, n_dims, rng_key, lr, n_inliers, n_outliers, n_random,
+    model, params = fit(rng_key, inputs, n_dims, lr, n_inliers, n_outliers, n_random,
                         batch_size=batch_size, n_epochs=n_epochs, reconstruction_loss_weight=reconstruction_loss_weight,
                         weight_temp=weight_temp, distance=distance, verbose=verbose)
 
