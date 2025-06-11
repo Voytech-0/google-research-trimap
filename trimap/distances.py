@@ -182,8 +182,7 @@ def hyperboloid_grad(x, y):
     for i in range(x.shape[0]):
         B -= x[i] * y[i]
 
-    if B <= 1:
-        B = 1.0 + 1e-8
+    B = jax.lax.cond(B <= 1, lambda: 1.0 + 1e-8, lambda: B)
 
     grad_coeff = 1.0 / (jnp.sqrt(B - 1) * jnp.sqrt(B + 1))
 
@@ -533,43 +532,41 @@ def yule(x, y):
 
 @jax.jit
 def cosine(x, y):
-    result = 0.0
-    norm_x = 0.0
-    norm_y = 0.0
-    for i in range(x.shape[0]):
-        result += x[i] * y[i]
-        norm_x += x[i] ** 2
-        norm_y += y[i] ** 2
-
-    if norm_x == 0.0 and norm_y == 0.0:
-        return 0.0
-    elif norm_x == 0.0 or norm_y == 0.0:
-        return 1.0
-    else:
-        return 1.0 - (result / jnp.sqrt(norm_x * norm_y))
+    x1_norm = jnp.maximum(jnp.linalg.norm(x, axis=-1), 1e-20)
+    y_norm = jnp.maximum(jnp.linalg.norm(y, axis=-1), 1e-20)
+    return 1. - jnp.sum(x * y, -1) / x1_norm / y_norm
 
 
 @jax.jit
 def cosine_grad(x, y):
-    result = 0.0
-    norm_x = 0.0
-    norm_y = 0.0
-    for i in range(x.shape[0]):
-        result += x[i] * y[i]
-        norm_x += x[i] ** 2
-        norm_y += y[i] ** 2
+    result = jnp.sum(x * y)
+    norm_x = jnp.sum(x ** 2)
+    norm_y = jnp.sum(y ** 2)
 
-    if norm_x == 0.0 and norm_y == 0.0:
+    def both_zero_case():
         dist = 0.0
-        grad = jnp.zeros(x.shape)
-    elif norm_x == 0.0 or norm_y == 0.0:
-        dist = 1.0
-        grad = jnp.zeros(x.shape)
-    else:
-        grad = -(x * result - y * norm_x) / jnp.sqrt(norm_x ** 3 * norm_y)
-        dist = 1.0 - (result / jnp.sqrt(norm_x * norm_y))
+        grad = jnp.zeros_like(x)
+        return dist, grad
 
-    return dist, grad
+    def one_zero_case():
+        dist = 1.0
+        grad = jnp.zeros_like(x)
+        return dist, grad
+
+    def normal_case():
+        dist = 1.0 - (result / jnp.sqrt(norm_x * norm_y))
+        grad = -(x * result - y * norm_x) / (jnp.sqrt(norm_x ** 3 * norm_y) + 1e-8)
+        return dist, grad
+
+    return jax.lax.cond(
+        jnp.logical_and(norm_x == 0.0, norm_y == 0.0),
+        both_zero_case,
+        lambda: jax.lax.cond(
+            jnp.logical_or(norm_x == 0.0, norm_y == 0.0),
+            one_zero_case,
+            normal_case
+        )
+    )
 
 
 @jax.jit

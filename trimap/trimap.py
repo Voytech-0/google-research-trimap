@@ -19,6 +19,7 @@ Source: https://arxiv.org/pdf/1910.00204.pdf
 """
 
 import datetime
+import os
 import time
 
 import jax
@@ -30,6 +31,7 @@ from absl import logging
 from sklearn.decomposition import PCA
 from sklearn.decomposition import TruncatedSVD
 
+# from google_research_trimap.trimap import distances
 import distances
 
 _DIM_PCA = 100
@@ -63,11 +65,9 @@ def get_distance_fn(distance_fn_name):
         return hamming_dist
     elif distance_fn_name == 'chebyshev':
         return chebyshev_dist
-    elif distance_fn_name in umap_distances.named_distances:
-        print(f'Using UMAP distance function: {distance_fn_name}')
-        raise NotImplementedError(
-            f'UMAP distance function {distance_fn_name} is not implemented in TriMap.'
-        )
+    elif distance_fn_name in distances.named_distances:
+        print(f'Using UMAP-adapted distance function: {distance_fn_name}')
+        return distances.named_distances[distance_fn_name]
     else:
         raise ValueError(f'Distance function {distance_fn_name} not supported.')
 
@@ -329,7 +329,7 @@ def generate_triplets(key,
     index.prepare()
     neighbors = index.query(inputs, n_extra)[0]
     neighbors = np.concatenate((np.arange(n_points).reshape([-1, 1]), neighbors),
-                               1)
+                           1)
     if verbose:
         logging.info('found nearest neighbors')
     distance_fn = get_distance_fn(distance)
@@ -370,6 +370,8 @@ def generate_triplets(key,
 def update_embedding_dbd(embedding, grad, vel, gain, lr, iter_num):
     """Update the embedding using delta-bar-delta."""
     gamma = jnp.where(iter_num > _SWITCH_ITER, _FINAL_MOMENTUM, _INIT_MOMENTUM)
+    # if grad is nan, set to 0
+    grad = jnp.where(jnp.isnan(grad), 0.0, grad)
     gain = jnp.where(
         jnp.sign(vel) != jnp.sign(grad), gain + _INCREASE_GAIN,
         jnp.maximum(gain * _DAMP_GAIN, _MIN_GAIN))
@@ -392,51 +394,51 @@ def metric_grad(x, y, metric):
 
 
 def trimap_metrics_grad(embedding, triplets, weights, metric):
-    anc_points = embedding[triplets[:, 0]]
-    sim_points = embedding[triplets[:, 1]]
-    out_points = embedding[triplets[:, 2]]
+    anc_idx = triplets[:, 0]
+    sim_idx = triplets[:, 1]
+    out_idx = triplets[:, 2]
 
-    sim_distance, sim_grad = metric_grad(anc_points, sim_points, metric)
-    out_distance, out_grad = metric_grad(anc_points, out_points, metric)
+    anc_points = embedding[anc_idx]
+    sim_points = embedding[sim_idx]
+    out_points = embedding[out_idx]
 
-    # Compute loss
-    loss = jnp.mean(weights * 1. / (1. + out_distance / sim_distance))
+    # Get distances and gradients wrt anchor points
+    sim_distance, sim_grad = metric_grad(anc_points, sim_points, metric)  # grad wrt anchor
+    out_distance, out_grad = metric_grad(anc_points, out_points, metric)  # grad wrt anchor
 
-    # Compute gradient of the loss with respect to the embedding
-    # We'll accumulate gradients for each point in the embedding
+    sim_distance += 1.0
+    out_distance += 1.0
+
+    ratio = out_distance / sim_distance
+    loss_term = weights / (1.0 + ratio)
+
+    loss = jnp.mean(loss_term)
+
+    # Derivative of loss w.r.t. distances
+    dL_dratio = -weights / (1.0 + ratio) ** 2
+    dratio_dsim = -out_distance / sim_distance ** 2
+    dratio_dout = 1.0 / sim_distance
+
+    dL_dsim = dL_dratio * dratio_dsim  # shape (N,)
+    dL_dout = dL_dratio * dratio_dout  # shape (N,)
+
+    dL_dsim = dL_dsim[:, None]
+    dL_dout = dL_dout[:, None]
+
+    # Gradient of loss w.r.t. anchor, sim, out
+    grad_anc = dL_dsim * sim_grad + dL_dout * out_grad
+    grad_sim = -dL_dsim * sim_grad  # sim is "negative side" of the distance
+    grad_out = -dL_dout * out_grad  # outlier is also "negative side"
+
     grad = jnp.zeros_like(embedding)
-
-    # For each triplet, compute the gradient contribution for anchor, sim, out
-    # The loss is: mean(weights * 1/(1 + out_distance/sim_distance))
-    # Let f = 1/(1 + out_distance/sim_distance)
-    # dL/dsim = weights * df/dsim
-    # dL/dout = weights * df/dout
-
-    # Compute partial derivatives
-    sim_distance = sim_distance + 1e-8  # avoid division by zero
-    out_distance = out_distance + 1e-8
-
-    f = 1. / (1. + out_distance / sim_distance)
-    df_dsim = weights * (out_distance / (sim_distance ** 2)) / (1. + out_distance / sim_distance) ** 2
-    df_dout = -weights / (sim_distance * (1. + out_distance / sim_distance) ** 2)
-
-    # Each triplet: anchor, sim, out
-    # sim_grad: d(haversine(anchor, sim))/d anchor
-    # out_grad: d(haversine(anchor, out))/d anchor
-
-    # For anchor:
-    grad_anchor = (df_dsim[:, None] * sim_grad) + (df_dout[:, None] * out_grad)
-    # For sim:
-    grad_sim = -df_dsim[:, None] * sim_grad
-    # For out:
-    grad_out = -df_dout[:, None] * out_grad
-
-    # Accumulate gradients for each point
-    grad = grad.at[triplets[:, 0]].add(grad_anchor)
-    grad = grad.at[triplets[:, 1]].add(grad_sim)
-    grad = grad.at[triplets[:, 2]].add(grad_out)
+    grad = grad.at[anc_idx].add(grad_anc)
+    grad = grad.at[sim_idx].add(grad_sim)
+    grad = grad.at[out_idx].add(grad_out)
 
     return loss, grad
+
+
+
 
 
 def trimap_metrics(embedding, triplets, weights, output_metric='euclidean'):
@@ -464,7 +466,6 @@ def trimap_loss(embedding, triplets, weights, output_metric='euclidean'):
     loss, _ = trimap_metrics(embedding, triplets, weights, output_metric=output_metric)
     return loss
 
-
 def transform(key,
               inputs,
               n_dims=2,
@@ -480,7 +481,8 @@ def transform(key,
               apply_pca=True,
               triplets=None,
               weights=None,
-              verbose=False):
+              verbose=False,
+              export_iters=False):
     """Transform inputs using TriMap.
 
     Args:
@@ -566,20 +568,27 @@ def transform(key,
     vel = jnp.zeros_like(embedding, dtype=jnp.float32)
     gain = jnp.ones_like(embedding, dtype=jnp.float32)
 
-    if callable(output_metric) or output_metric != 'euclidean':
-        trimap_grad = (
-            lambda embedding, triplets, weights: trimap_metrics_grad(embedding, triplets, weights, output_metric)[1])
+    if export_iters:
+        shape = (n_iters, n_points, n_dims)
+        embedings_series = np.zeros(shape, dtype=np.float32)
 
-    else:
-        trimap_grad = jax.jit(jax.grad(trimap_loss))
+    # if callable(output_metric) or output_metric != 'euclidean':
+    trimap_grad = (
+        lambda embedding, triplets, weights: trimap_metrics_grad(embedding, triplets, weights, output_metric)[1])
+
+    # else:
+    #     trimap_grad = jax.jit(jax.grad(trimap_loss))
 
     for itr in range(n_iters):
         gamma = _FINAL_MOMENTUM if itr > _SWITCH_ITER else _INIT_MOMENTUM
         grad = trimap_grad(embedding + gamma * vel, triplets, weights)
-
+        # print("emb:", embedding[:10])
+        # print("gra:", grad[:10])
         # update the embedding
         embedding, vel, gain = update_embedding_dbd(embedding, grad, vel, gain, lr,
                                                     itr)
+        if export_iters:
+            embedings_series[itr] = embedding
         if verbose:
             if (itr + 1) % _DISPLAY_ITER == 0:
                 loss, n_violated = trimap_metrics(embedding, triplets, weights, output_metric=output_metric)
@@ -589,4 +598,6 @@ def transform(key,
     if verbose:
         elapsed = str(datetime.timedelta(seconds=time.time() - t))
         logging.info('Elapsed time: %s', elapsed)
+    if export_iters:
+        return embedings_series
     return embedding
