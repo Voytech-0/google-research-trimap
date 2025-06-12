@@ -13,12 +13,12 @@ from absl import logging
 class ParametricTriMap(nn.Module):
     input_dims: int
     latent_dims: int
-    hidden_dims: int = 100
+    hidden_dims: int = 300
     hidden_layers: int = 3
     activation_fn: callable = nn.relu
     kernel_init: callable = nn.initializers.kaiming_normal()
     bias_init: callable = nn.initializers.zeros
-    use_residual_connections: bool = True
+    use_residual_connections: bool = False
 
     def setup(self):
         forwarded_params = (self.hidden_dims, self.hidden_layers, self.activation_fn,
@@ -57,7 +57,7 @@ class MLP(nn.Module):
                 x = x + skip
 
             x = self.activation_fn(x)
-        latent = nn.Dense(self.latent_dims, kernel_init=self.kernel_init, bias_init=self.bias_init)(x)
+        latent = nn.Dense(self.out_dims, kernel_init=self.kernel_init, bias_init=self.bias_init)(x)
         return latent
 
 
