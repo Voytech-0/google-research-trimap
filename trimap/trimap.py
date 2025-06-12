@@ -596,9 +596,8 @@ def inverse_transform(key,
   for itr in range(n_iters):
     gamma = _FINAL_MOMENTUM if itr > _SWITCH_ITER else _INIT_MOMENTUM
     grad = trimap_grad(inversed_data + gamma * vel, original_data)
-
     # update the embedding
-    inversed_data, vel, gain = update_embedding_dbd(inversed_data, grad, vel, gain, lr, itr)
+    inversed_data, gain, vel = update_embedding_dbd(inversed_data, grad, vel, gain, lr, itr)
     if verbose:
       if (itr + 1) % _DISPLAY_ITER == 0:
         loss, n_violated = trimap_metrics(jnp.concatenate((inversed_data, original_data)), triplets, weights)

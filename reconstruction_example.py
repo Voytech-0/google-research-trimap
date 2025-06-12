@@ -44,7 +44,7 @@ def iterative_trimap(key, data):
     forward_transform_key, inverse_transform_key = random.split(key, 2)
     embedding = trimap.transform(forward_transform_key, data, 2, verbose=True)
     test_pts = generate_grid(np.min(embedding, axis=0), np.max(embedding, axis=0))
-    reconstructed_data = trimap.inverse_transform(inverse_transform_key, test_pts, embedding, data, verbose=True, n_iters=0)
+    reconstructed_data = trimap.inverse_transform(inverse_transform_key, test_pts, embedding, data, verbose=True, n_iters=20)
     return embedding, reconstructed_data, test_pts
 
 if __name__ == '__main__':

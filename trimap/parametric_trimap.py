@@ -18,11 +18,13 @@ class ParametricTriMap(nn.Module):
     activation_fn: callable = nn.relu
     kernel_init: callable = nn.initializers.kaiming_normal()
     bias_init: callable = nn.initializers.zeros
+    use_residual_connections: bool = True
 
     def setup(self):
-        forwarded_params = (self.hidden_dims, self.hidden_layers, self.activation_fn, self.kernel_init, self.bias_init)
-        self.encoder = Encoder(self.latent_dims, *forwarded_params)
-        self.decoder = Decoder(self.input_dims, *forwarded_params)
+        forwarded_params = (self.hidden_dims, self.hidden_layers, self.activation_fn,
+                            self.kernel_init, self.bias_init, self.use_residual_connections)
+        self.encoder = MLP(self.latent_dims, *forwarded_params)
+        self.decoder = MLP(self.input_dims, *forwarded_params)
 
     def encode(self, x):
         return self.encoder(x)
@@ -36,37 +38,28 @@ class ParametricTriMap(nn.Module):
         approx_x = self.decode(approx_trimap_embedding)
         return approx_x
 
-class Encoder(nn.Module):
-    latent_dims: int
-    hidden_dims: int
-    hidden_layers: int
-    activation_fn: callable
-    kernel_init: callable
-    bias_init: callable
-
-    @nn.compact
-    def __call__(self, x):
-        for _ in range(self.hidden_layers):
-            x = nn.Dense(self.hidden_dims, kernel_init=self.kernel_init, bias_init=self.bias_init)(x)
-            x = self.activation_fn(nn.Dense(self.hidden_dims)(x))
-        latent = nn.Dense(self.latent_dims, kernel_init=self.kernel_init, bias_init=self.bias_init)(x)
-        return latent
-
-class Decoder(nn.Module):
+class MLP(nn.Module):
     out_dims: int
     hidden_dims: int
     hidden_layers: int
     activation_fn: callable
     kernel_init: callable
     bias_init: callable
+    use_residual_connections: bool
 
     @nn.compact
     def __call__(self, x):
-        for _ in range(self.hidden_layers):
+        for idx in range(self.hidden_layers):
+            skip = x
             x = nn.Dense(self.hidden_dims, kernel_init=self.kernel_init, bias_init=self.bias_init)(x)
+
+            if self.use_residual_connections and idx > 0:
+                x = x + skip
+
             x = self.activation_fn(x)
-        output = nn.Dense(self.out_dims, kernel_init=self.kernel_init, bias_init=self.bias_init)(x)
-        return output
+        latent = nn.Dense(self.latent_dims, kernel_init=self.kernel_init, bias_init=self.bias_init)(x)
+        return latent
+
 
 def initialize_model(input_dims, n_dims, rng_key, lr=1e-4):
     autoencoder = ParametricTriMap(input_dims, n_dims)
@@ -100,7 +93,6 @@ def fit(rng_key, inputs, n_dims,
                   n_inliers=10,
                   n_outliers=5,
                   n_random=3,
-                  batch_size=32,
                   n_epochs=1000,
                   reconstruction_loss_weight=0.05,
                   weight_temp=0.5,
@@ -136,14 +128,13 @@ def fit_transform(rng_key, inputs, n_dims,
                   n_inliers=10,
                   n_outliers=5,
                   n_random=3,
-                  batch_size=32,
                   n_epochs=1000,
                   reconstruction_loss_weight=0.05,
                   weight_temp=0.5,
                   distance='euclidean',
                   verbose=False):
     model, params = fit(rng_key, inputs, n_dims, lr, n_inliers, n_outliers, n_random,
-                        batch_size=batch_size, n_epochs=n_epochs, reconstruction_loss_weight=reconstruction_loss_weight,
+                        n_epochs=n_epochs, reconstruction_loss_weight=reconstruction_loss_weight,
                         weight_temp=weight_temp, distance=distance, verbose=verbose)
 
     embedding = transform(inputs, model, params)
