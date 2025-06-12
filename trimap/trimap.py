@@ -19,7 +19,6 @@ Source: https://arxiv.org/pdf/1910.00204.pdf
 """
 
 import datetime
-import os
 import time
 
 import jax
@@ -31,8 +30,10 @@ from absl import logging
 from sklearn.decomposition import PCA
 from sklearn.decomposition import TruncatedSVD
 
-# from google_research_trimap.trimap import distances
-import distances
+try:
+    from google_research_trimap.trimap import distances
+except ImportError:
+    import distances
 
 _DIM_PCA = 100
 _INIT_SCALE = 0.01
@@ -329,7 +330,7 @@ def generate_triplets(key,
     index.prepare()
     neighbors = index.query(inputs, n_extra)[0]
     neighbors = np.concatenate((np.arange(n_points).reshape([-1, 1]), neighbors),
-                           1)
+                               1)
     if verbose:
         logging.info('found nearest neighbors')
     distance_fn = get_distance_fn(distance)
@@ -394,6 +395,8 @@ def metric_grad(x, y, metric):
 
 
 def trimap_metrics_grad(embedding, triplets, weights, metric):
+
+
     anc_idx = triplets[:, 0]
     sim_idx = triplets[:, 1]
     out_idx = triplets[:, 2]
@@ -472,8 +475,9 @@ def trimap_metrics(embedding, triplets, weights, metric='euclidean'):
 @jax.jit
 def trimap_loss(embedding, triplets, weights, output_metric='euclidean'):
     """Return trimap loss."""
-    loss, _ = trimap_metrics(embedding, triplets, weights, output_metric=output_metric)
+    loss, _ = trimap_metrics(embedding, triplets, weights, metric=output_metric)
     return loss
+
 
 def transform(key,
               inputs,
@@ -581,16 +585,16 @@ def transform(key,
         shape = (n_iters, n_points, n_dims)
         embedings_series = np.zeros(shape, dtype=np.float32)
 
-    # if callable(output_metric) or output_metric != 'euclidean':
-    # trimap_grad = (
-    #     lambda embedding, triplets, weights: trimap_metrics_grad(embedding, triplets, weights, output_metric)[1])
-
     def differentiable_loss(embedding, triplets, weights):
         """Wrapper for the loss function to make it differentiable."""
         loss, _ = trimap_metrics(embedding, triplets, weights, metric=output_metric)
         return loss
-    # else:
-    trimap_grad = jax.jit(jax.grad(differentiable_loss))
+
+    if callable(output_metric) or output_metric == 'haversine':
+        trimap_grad = (
+            lambda embedding, triplets, weights: trimap_metrics_grad(embedding, triplets, weights, output_metric)[1])
+    else:
+        trimap_grad = jax.jit(jax.grad(differentiable_loss))
 
     for itr in range(n_iters):
         gamma = _FINAL_MOMENTUM if itr > _SWITCH_ITER else _INIT_MOMENTUM
