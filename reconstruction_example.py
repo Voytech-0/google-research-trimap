@@ -35,6 +35,7 @@ def generate_grid(top_left, bottom_right, num_x=10, num_y=10):
 
 
 def parametric_trimap(key, data):
+    print(np.min(data), np.max(data))
     embedding, model, params = ptrimap.fit_transform(key, data, 2, verbose=True)
     test_pts = generate_grid(np.min(embedding, axis=0), np.max(embedding, axis=0))
     reconstructed_data = ptrimap.inverse_transform(test_pts, model, params)
