@@ -505,7 +505,7 @@ def transform(key,
     grad = trimap_grad(embedding + gamma * vel, triplets, weights)
 
     # update the embedding
-    embedding, vel, gain = update_embedding_dbd(embedding, grad, vel, gain, lr,
+    embedding, gain, vel = update_embedding_dbd(embedding, grad, vel, gain, lr,
                                                 itr)
     if verbose:
       if (itr + 1) % _DISPLAY_ITER == 0:
@@ -535,7 +535,7 @@ def inverse_transform(key,
               verbose=False):
 
   norm_stats = {'min': jnp.min(original_data), 'max': jnp.max(original_data)}
-  original_data = (original_data - norm_stats['min']) / norm_stats['max'] - norm_stats['min']
+  original_data = (original_data - norm_stats['min']) / (norm_stats['max'] - norm_stats['min'])
 
   if verbose:
     t = time.time()

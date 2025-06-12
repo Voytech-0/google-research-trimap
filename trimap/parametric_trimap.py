@@ -117,7 +117,6 @@ def fit(rng_key, inputs, n_dims,
             logging.info(f'Epoch {epoch} loss: {loss:.3}, '
                          f'trimap_loss {aux["triplet_loss"]:.3}, reconstruction_loss {aux["reconstruction_loss"]:.3}')
 
-
     return model, state.params
 
 def transform(inputs, model, params):
