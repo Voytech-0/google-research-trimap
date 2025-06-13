@@ -43,3 +43,14 @@ def plot_inverse_grid(embeddings, inverse_transformed_embeddings, labels, test_p
             digit_axes[i, j].imshow(inverse_transformed_embeddings[-(i+1), j])
             digit_axes[i, j].set(xticks=[], yticks=[])
     plt.show()
+
+def plot_new_insertions(embeddings, new_embeddings, labels):
+    plt.figure(figsize=(10, 6))
+    plt.scatter(embeddings[:, 0], embeddings[:, 1], c=labels, s=10, cmap='tab20', alpha=0.6, label='Original Data')
+    plt.scatter(new_embeddings[:, 0], new_embeddings[:, 1],
+                color='red', s=80, edgecolor='black', label='New Points')
+    plt.title("TriMap Projection of CIFAR-100 with New Points Added")
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+

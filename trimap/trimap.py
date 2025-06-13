@@ -611,3 +611,107 @@ def inverse_transform(key,
 
   inversed_data = inversed_data * (norm_stats['max'] - norm_stats['min']) + norm_stats['min']
   return inversed_data
+
+
+def embed_new_point(key,
+                    new_point,
+                    original_inputs,
+                    original_embedding,
+                    n_inliers=10,
+                    n_outliers=5,
+                    distance='euclidean',
+                    n_iters=200,
+                    lr=0.1,
+                    weight_temp=0.5,
+                    init='average'):
+  """Embeds a new high-dimensional point into an existing TriMap projection."""
+
+  distance_fn = get_distance_fn(distance)
+  new_point = new_point.reshape(1, -1)
+  n_points = original_inputs.shape[0]
+
+  # Step 1: Nearest neighbors
+  index = pynndescent.NNDescent(original_inputs, metric=distance)
+  index.prepare()
+  neighbors = index.query(new_point, n_inliers)[0][0]
+  neighbors = np.concatenate(([0], neighbors))
+
+  # Combine new point with original inputs for distance calls
+  all_inputs = jnp.concatenate([jnp.array(new_point), jnp.array(original_inputs)], axis=0)
+  sig = jnp.maximum(jnp.mean(jnp.sqrt(jnp.sum((all_inputs[0] - all_inputs[1:][neighbors]) ** 2, axis=-1))), 1e-10)
+  sig = jnp.concatenate([jnp.array([sig]), jnp.ones(n_points)])
+
+  # Step 2: Triplets
+  anchor_idx = 0
+  inlier_indices = neighbors[1:] + 1
+  outlier_candidates = np.setdiff1d(np.arange(n_points), neighbors[1:])
+  key, subkey = random.split(key)
+  outlier_indices = random.choice(subkey, len(outlier_candidates), (n_inliers * n_outliers,), replace=False)
+  outlier_indices = jnp.array(outlier_candidates)[outlier_indices % len(outlier_candidates)] + 1
+
+  anchors = jnp.tile(jnp.array([anchor_idx]), (n_inliers * n_outliers, 1))
+  inliers = jnp.tile(jnp.array(inlier_indices), (n_outliers, 1)).reshape(-1, 1)
+  outliers = outlier_indices.reshape(-1, 1)
+  triplets = jnp.concatenate([anchors, inliers, outliers], axis=1)
+
+  # Step 3: Weights
+  weights = find_triplet_weights(
+    all_inputs,
+    triplets,
+    jnp.array(inlier_indices).reshape(1, -1),
+    distance_fn,
+    sig
+  )
+  weights -= jnp.min(weights)
+  weights = tempered_log(1. + weights, weight_temp)
+
+  # Step 4: Optimize new embedding
+  if init == 'average':
+    initial_pos = jnp.mean(original_embedding[inlier_indices - 1], axis=0)
+  else:
+    key, subkey = random.split(key)
+    initial_pos = random.normal(subkey, (2,)) * _INIT_SCALE
+
+  new_embedding = initial_pos
+  vel = jnp.zeros_like(new_embedding)
+  gain = jnp.ones_like(new_embedding)
+
+  def loss_fn(pos):
+    all_embedding = jnp.concatenate([pos.reshape(1, 2), original_embedding], axis=0)
+    return trimap_loss(all_embedding, triplets, weights)
+
+  grad_fn = jax.grad(loss_fn)
+
+  for i in range(n_iters):
+    gamma = _FINAL_MOMENTUM if i > _SWITCH_ITER else _INIT_MOMENTUM
+    grad = grad_fn(new_embedding + gamma * vel)
+    gain = jnp.where(
+      jnp.sign(vel) != jnp.sign(grad),
+      gain + _INCREASE_GAIN,
+      jnp.maximum(gain * _DAMP_GAIN, _MIN_GAIN)
+    )
+    vel = gamma * vel - lr * gain * grad
+    new_embedding += vel
+
+  return new_embedding
+
+
+def embed_multiple_new_points(key, new_points, original_inputs, original_embedding,
+                              n_inliers=10, n_outliers=5, distance='euclidean', n_iters=200):
+  """Embeds multiple new high-dimensional points into an existing TriMap projection."""
+  new_embeddings = []
+  for i, new_point in enumerate(new_points):
+    key, subkey = random.split(key)
+    emb = embed_new_point(
+      subkey,
+      new_point,
+      original_inputs,
+      original_embedding,
+      n_inliers=n_inliers,
+      n_outliers=n_outliers,
+      distance=distance,
+      n_iters=n_iters
+    )
+    new_embeddings.append(emb)
+  return jnp.stack(new_embeddings)
+

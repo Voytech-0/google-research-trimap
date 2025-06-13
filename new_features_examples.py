@@ -7,7 +7,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import logging
 import argparse
-from visualize import plot_embeddings, plot_inverse_grid
+from visualize import plot_embeddings, plot_inverse_grid, plot_new_insertions
+
 
 def generate_grid(top_left, bottom_right, num_x=10, num_y=10):
     # Define corners
@@ -47,10 +48,27 @@ def iterative_trimap(key, data):
     reconstructed_data = trimap.inverse_transform(inverse_transform_key, test_pts, embedding, data, verbose=True, n_iters=20)
     return embedding, reconstructed_data, test_pts
 
+def dynamic_projection(key, data, new_points):
+    embedding = trimap.transform(key, data, n_iters=4000, verbose=True)
+    new_embeddings = trimap.embed_multiple_new_points(
+        key,
+        new_points,
+        data,
+        embedding,
+        n_inliers=10,
+        n_outliers=5,
+        distance='euclidean',
+        n_iters=200
+    )
+    return embedding, new_embeddings
+
+
 if __name__ == '__main__':
     args = argparse.ArgumentParser()
     args.add_argument('--dataset', type=str, default='mnist')
     args.add_argument('--parametric', action='store_true', default=False)
+    args.add_argument('--inverse', action='store_true', default=False)
+    args.add_argument('--dynamic', action='store_true', default=False)
     args = args.parse_args()
     data = load_digits()
     digits = data.data
@@ -63,12 +81,16 @@ if __name__ == '__main__':
         format='%(asctime)s - %(levelname)s - %(message)s'  # Format of the log messages
     )
 
-    trimap_fn = parametric_trimap if args.parametric else iterative_trimap
+    if args.dynamic:
+        embedding, new_embedding = dynamic_projection(key, digits[:1000], digits[1000:1010])
+        plot_new_insertions(embedding, new_embedding, data.target[:1000])
 
-    embedding, reconstructed_digits, test_pts = trimap_fn(key, digits)
-    plot_embeddings(embedding, data.target)
+    if args.inverse:
+        trimap_fn = parametric_trimap if args.parametric else iterative_trimap
+        embedding, reconstructed_digits, test_pts = trimap_fn(key, digits)
+        plot_embeddings(embedding, data.target)
 
-    reconstructed_digits = reconstructed_digits.reshape((-1, *original_shape[1:]))
-    digits = digits.reshape(original_shape)
-    print(f'shapes: embedding {embedding.shape} reconstructed {reconstructed_digits.shape}')
-    plot_inverse_grid(embedding, reconstructed_digits, data.target, test_pts)
+        reconstructed_digits = reconstructed_digits.reshape((-1, *original_shape[1:]))
+        digits = digits.reshape(original_shape)
+        print(f'shapes: embedding {embedding.shape} reconstructed {reconstructed_digits.shape}')
+        plot_inverse_grid(embedding, reconstructed_digits, data.target, test_pts)
