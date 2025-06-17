@@ -168,6 +168,8 @@ def poincare(u, v):
     sq_dist = jnp.sum(jnp.power(u - v, 2))
     return jnp.arccosh(1 + 2 * (sq_dist / ((1 - sq_u_norm) * (1 - sq_v_norm))))
 
+def hyperboloid(x, y):
+    return hyperboloid_grad(x, y)[0]
 
 @jax.jit
 def hyperboloid_grad(x, y):
@@ -1161,6 +1163,7 @@ named_distances = {
     "count": count_distance,
     "string": levenshtein,
     "gaussian_energy": gaussian_energy,
+    "hyperboloid": hyperboloid,
 }
 
 named_distances_with_gradients = {

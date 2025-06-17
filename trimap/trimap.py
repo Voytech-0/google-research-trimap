@@ -378,7 +378,7 @@ def update_embedding_dbd(embedding, grad, vel, gain, lr, iter_num):
         jnp.maximum(gain * _DAMP_GAIN, _MIN_GAIN))
     vel = gamma * vel - lr * gain * grad
     embedding += vel
-    return embedding, gain, vel
+    return embedding, vel, gain
 
 
 def metric_grad(x, y, metric):
@@ -409,15 +409,8 @@ def trimap_metrics_grad(embedding, triplets, weights, metric):
     sim_distance, sim_grad = metric_grad(anc_points, sim_points, metric)  # grad wrt anchor
     out_distance, out_grad = metric_grad(anc_points, out_points, metric)  # grad wrt anchor
 
-    sim_distance += 1e-8
-    out_distance += 1e-8
-
-    # print how many out_distance ate smaller than sim_distance
-    # if jnp.any(out_distance < sim_distance):
-    #     logging.warning('Some out distances are smaller than sim distances.')
-    #     n_wrong = jnp.sum(out_distance < sim_distance)
-    #     n_total = triplets.shape[0]
-    #     logging.warning('There are %d out of %d triplets with out_distance < sim_distance', n_wrong, n_total)
+    sim_distance += 1
+    out_distance += 1
 
     ratio = out_distance / sim_distance
     loss_term = weights / (1.0 + ratio)
@@ -434,11 +427,6 @@ def trimap_metrics_grad(embedding, triplets, weights, metric):
 
     dL_dsim = dL_dsim[:, None]
     dL_dout = dL_dout[:, None]
-
-    # do not consider points where out_distance < sim_distance
-    # mask = (out_distance >= sim_distance).reshape(-1, 1)
-    # dL_dsim = jnp.where(mask, dL_dsim, 0.0)
-    # dL_dout = jnp.where(mask, dL_dout, 0.0)
 
     # Gradient of loss w.r.t. anchor, sim, out
     grad_anc = dL_dsim * sim_grad + dL_dout * out_grad
@@ -495,7 +483,8 @@ def transform(key,
               triplets=None,
               weights=None,
               verbose=False,
-              export_iters=False):
+              export_iters=False,
+              auto_diff=True):
     """Transform inputs using TriMap.
 
     Args:
@@ -515,6 +504,8 @@ def transform(key,
       triplets: Use pre-sampled triplets.
       weights: Use pre-computed weights.
       verbose: Whether to print progress.
+      export_iters: Whether to export the embedding at each iteration.
+      auto_diff: Whether to use automatic differentiation for the loss.
 
     Returns:
       embedding
@@ -590,7 +581,7 @@ def transform(key,
         loss, _ = trimap_metrics(embedding, triplets, weights, metric=output_metric)
         return loss
 
-    if callable(output_metric) or output_metric == 'haversine':
+    if not auto_diff or callable(output_metric):
         trimap_grad = (
             lambda embedding, triplets, weights: trimap_metrics_grad(embedding, triplets, weights, output_metric)[1])
     else:
@@ -608,7 +599,7 @@ def transform(key,
             embedings_series[itr] = embedding
         if verbose:
             if (itr + 1) % _DISPLAY_ITER == 0:
-                loss, n_violated = trimap_metrics(embedding, triplets, weights, output_metric=output_metric)
+                loss, n_violated = trimap_metrics(embedding, triplets, weights, metric=output_metric)
                 logging.info(
                     'Iteration: %4d / %4d, Loss: %3.3f, Violated triplets: %0.4f',
                     itr + 1, n_iters, loss, n_violated / n_triplets * 100.0)
