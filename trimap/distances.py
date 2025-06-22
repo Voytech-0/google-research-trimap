@@ -39,6 +39,22 @@ def euclidean_grad(x, y):
     grad = (x - y) / (1e-6 + d)
     return d, grad
 
+@jax.jit
+def squared_euclidean(x, y):
+    return jnp.sum((x - y) ** 2)
+
+@jax.jit
+def squared_euclidean_grad(x, y):
+    r"""Squared Euclidean distance and its gradient.
+
+    ..math::
+        D(x, y) = \sum_i (x_i - y_i)^2
+        \frac{dD(x, y)}{dx} = 2(x_i - y_i)
+    """
+    d = jnp.sum((x - y) ** 2)
+    grad = 2 * (x - y)
+    return d, grad
+
 
 @jax.jit
 def standardised_euclidean(x, y, sigma=None):
@@ -1119,6 +1135,7 @@ def levenshtein(x, y, normalisation=1.0, max_distance=20):
 
 named_distances = {
     # general minkowski distances
+    "squared_euclidean": squared_euclidean,
     "euclidean": euclidean,
     "l2": euclidean,
     "manhattan": manhattan,
@@ -1168,6 +1185,7 @@ named_distances = {
 
 named_distances_with_gradients = {
     # general minkowski distances
+    "squared_euclidean": squared_euclidean_grad,
     "euclidean": euclidean_grad,
     "l2": euclidean_grad,
     "manhattan": manhattan_grad,

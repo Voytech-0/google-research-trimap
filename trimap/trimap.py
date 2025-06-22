@@ -58,6 +58,8 @@ def get_distance_fn(distance_fn_name):
     """Get the distance function."""
     if distance_fn_name == 'euclidean':
         return euclidean_dist
+    elif distance_fn_name == 'squared_euclidean':
+        return squared_euclidean_dist
     elif distance_fn_name == 'manhattan':
         return manhattan_dist
     elif distance_fn_name == 'cosine':
@@ -66,6 +68,8 @@ def get_distance_fn(distance_fn_name):
         return hamming_dist
     elif distance_fn_name == 'chebyshev':
         return chebyshev_dist
+    elif distance_fn_name == "haversine":
+        return haversine
     elif distance_fn_name in distances.named_distances:
         print(f'Using UMAP-adapted distance function: {distance_fn_name}')
         return distances.named_distances[distance_fn_name]
@@ -142,6 +146,42 @@ def chebyshev_dist(x1, x2):
     """Chebyshev distance between two vectors."""
     return jnp.max(jnp.abs(x1 - x2), -1)
 
+@jax.custom_jvp
+def haversine(x, y):
+    """Haversine distance between two points on a sphere."""
+    sin_lat = jnp.sin(0.5 * (x[..., 0] - y[..., 0]))
+    sin_long = jnp.sin(0.5 * (x[..., 1] - y[..., 1]))
+    a = sin_lat**2 + jnp.cos(x[..., 0]) * jnp.cos(y[..., 0]) * sin_long**2
+    return 2.0 * jnp.arcsin(jnp.sqrt(a))
+
+@haversine.defjvp
+def haversine_jvp(primals, tangents):
+    x, y = primals
+    t_x, t_y = tangents
+
+    # Forward pass
+    dist = haversine(x, y)
+
+    # Backward pass (gradient computation)
+    sin_lat = jnp.sin(0.5 * (x[..., 0] - y[..., 0]))
+    sin_long = jnp.sin(0.5 * (x[..., 1] - y[..., 1]))
+    cos_lat_x = jnp.cos(x[..., 0])
+    cos_lat_y = jnp.cos(y[..., 0])
+    a = sin_lat**2 + cos_lat_x * cos_lat_y * sin_long**2
+    sqrt_a = jnp.sqrt(a)
+    denom = jnp.sqrt(1 - a) * sqrt_a + 1e-8  # Avoid division by zero
+
+    grad_x = jnp.stack([
+        (cos_lat_x * sin_lat) / denom,
+        (cos_lat_x * cos_lat_y * sin_long) / denom
+    ], axis=-1)
+    grad_y = jnp.stack([
+        -(cos_lat_y * sin_lat) / denom,
+        -(cos_lat_x * cos_lat_y * sin_long) / denom
+    ], axis=-1)
+
+    tangent_out = jnp.sum(grad_x * t_x, axis=-1) + jnp.sum(grad_y * t_y, axis=-1)
+    return dist, tangent_out
 
 def rejection_sample(key, shape, maxval, rejects):
     """Rejection sample indices.
