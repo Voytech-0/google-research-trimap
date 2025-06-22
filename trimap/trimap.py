@@ -69,7 +69,7 @@ def get_distance_fn(distance_fn_name):
     elif distance_fn_name == 'chebyshev':
         return chebyshev_dist
     elif distance_fn_name == "haversine":
-        return haversine
+        return haversine_dist
     elif distance_fn_name in distances.named_distances:
         print(f'Using UMAP-adapted distance function: {distance_fn_name}')
         return distances.named_distances[distance_fn_name]
@@ -147,20 +147,20 @@ def chebyshev_dist(x1, x2):
     return jnp.max(jnp.abs(x1 - x2), -1)
 
 @jax.custom_jvp
-def haversine(x, y):
+def haversine_dist(x, y):
     """Haversine distance between two points on a sphere."""
     sin_lat = jnp.sin(0.5 * (x[..., 0] - y[..., 0]))
     sin_long = jnp.sin(0.5 * (x[..., 1] - y[..., 1]))
     a = sin_lat**2 + jnp.cos(x[..., 0]) * jnp.cos(y[..., 0]) * sin_long**2
     return 2.0 * jnp.arcsin(jnp.sqrt(a))
 
-@haversine.defjvp
-def haversine_jvp(primals, tangents):
+@haversine_dist.defjvp
+def haversine_dist_jvp(primals, tangents):
     x, y = primals
     t_x, t_y = tangents
 
     # Forward pass
-    dist = haversine(x, y)
+    dist = haversine_dist(x, y)
 
     # Backward pass (gradient computation)
     sin_lat = jnp.sin(0.5 * (x[..., 0] - y[..., 0]))
@@ -493,8 +493,8 @@ def trimap_metrics(embedding, triplets, weights, metric='euclidean'):
     sim_points = embedding[triplets[:, 1]]
     out_points = embedding[triplets[:, 2]]
     fn = get_output_distance_fn(metric)
-    sim_distance = 1. + jax.vmap(fn)(anc_points, sim_points)
-    out_distance = 1. + jax.vmap(fn)(anc_points, out_points)
+    sim_distance = 1. + fn(anc_points, sim_points)
+    out_distance = 1. + fn(anc_points, out_points)
     num_violated = jnp.sum(sim_distance > out_distance)
     loss = jnp.mean(weights * 1. / (1. + out_distance / sim_distance))
     return loss, num_violated
