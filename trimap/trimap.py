@@ -20,8 +20,6 @@ Source: https://arxiv.org/pdf/1910.00204.pdf
 
 import datetime
 import time
-from typing import Mapping
-
 from absl import logging
 import jax
 import jax.numpy as jnp
@@ -95,8 +93,8 @@ def sliced_distances(
 
 @jax.jit
 def squared_euclidean_dist(x1, x2):
-  """Squared Euclidean distance between rows of x1 and x2."""
-  return jnp.sum(jnp.power(x1 - x2, 2), axis=-1)
+    """Squared Euclidean distance between rows of x1 and x2."""
+    return jnp.sum(jnp.power(x1 - x2, 2), axis=-1)
 
 
 @jax.jit
