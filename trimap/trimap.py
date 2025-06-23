@@ -79,6 +79,8 @@ def get_distance_fn(distance_fn_name):
 
 def get_output_distance_fn(output_metric_name):
   """Get the output (embedding space) distance function."""
+  if callable(output_metric_name):
+    return output_metric_name
   return get_distance_fn(output_metric_name)
 
 
@@ -641,7 +643,7 @@ def transform(key,
       loss, _ = trimap_metrics(embedding, triplets, weights, metric=output_metric)
       return loss
 
-    if not auto_diff or callable(output_metric):
+    if not auto_diff:
       trimap_grad = (
         lambda embedding, triplets, weights: trimap_metrics_grad(embedding, triplets, weights, output_metric)[1])
     else:
