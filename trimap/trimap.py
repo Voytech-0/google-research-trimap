@@ -627,31 +627,31 @@ def transform(key,
   else:
     embedding = jnp.array(init_embedding, dtype=jnp.float32)
 
-    n_triplets = float(triplets.shape[0])
-    lr = lr * n_points / n_triplets
-    if verbose:
-      logging.info('running TriMap using DBD')
-    vel = jnp.zeros_like(embedding, dtype=jnp.float32)
-    gain = jnp.ones_like(embedding, dtype=jnp.float32)
+  n_triplets = float(triplets.shape[0])
+  lr = lr * n_points / n_triplets
+  if verbose:
+    logging.info('running TriMap using DBD')
+  vel = jnp.zeros_like(embedding, dtype=jnp.float32)
+  gain = jnp.ones_like(embedding, dtype=jnp.float32)
 
-    if export_iters:
-      shape = (n_iters, n_points, n_dims)
-      embedings_series = np.zeros(shape, dtype=np.float32)
+  if export_iters:
+    shape = (n_iters, n_points, n_dims)
+    embedings_series = np.zeros(shape, dtype=np.float32)
 
-    def differentiable_loss(embedding, triplets, weights):
-      """Wrapper for the loss function to make it differentiable."""
-      loss, _ = trimap_metrics(embedding, triplets, weights, metric=output_metric)
-      return loss
+  def differentiable_loss(embedding, triplets, weights):
+    """Wrapper for the loss function to make it differentiable."""
+    loss, _ = trimap_metrics(embedding, triplets, weights, metric=output_metric)
+    return loss
 
-    if not auto_diff:
-      trimap_grad = (
-        lambda embedding, triplets, weights: trimap_metrics_grad(embedding, triplets, weights, output_metric)[1])
-    else:
-      trimap_grad = jax.jit(jax.grad(differentiable_loss))
+  if not auto_diff:
+    trimap_grad = (
+      lambda embedding, triplets, weights: trimap_metrics_grad(embedding, triplets, weights, output_metric)[1])
+  else:
+    trimap_grad = jax.jit(jax.grad(differentiable_loss))
 
-      for itr in range(n_iters):
-        gamma = _FINAL_MOMENTUM if itr > _SWITCH_ITER else _INIT_MOMENTUM
-        grad = trimap_grad(embedding + gamma * vel, triplets, weights)
+  for itr in range(n_iters):
+    gamma = _FINAL_MOMENTUM if itr > _SWITCH_ITER else _INIT_MOMENTUM
+    grad = trimap_grad(embedding + gamma * vel, triplets, weights)
 
     # update the embedding
     embedding, vel, gain = update_embedding_dbd(embedding, grad, vel, gain, lr,
